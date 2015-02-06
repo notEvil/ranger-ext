@@ -4,7 +4,7 @@ It's a special kind of the scout command. The user input is matched against ever
 
 # Why ?
 
-The Smith-Waterman algorithm is a great tool which allows fuzzy matching such that typos don't kill your search. It is meant to be a navigation device, not a filter or selection tool.
+The Smith-Waterman algorithm is a great tool for fuzzy string matching. Typos or gaps are nuisances, not show stoppers. This extension is meant to be a navigation device, not a filter or selection tool.
 
 # How to ?
 
