@@ -143,9 +143,8 @@ class CopyLoader(loader.Loadable, loader.FileManagerAware):
             return
         # TODO: Don't calculate size when renaming (needs detection)
         bytes_per_tick = shutil_g.BLOCK_SIZE
-        #raise Exception(run_external.pickle.dumps(_CopyLoader_calculate_size))
         self.SubLoader = ExternalLoader(0, self.Sudo, _CopyLoader_calculate_size,
-                                        (self.copy_buffer,))
+                                        args=([f.path for f in self.copy_buffer],))
         for size in self.SubLoader.load_generator:
             yield
         if size == 0:
@@ -158,12 +157,12 @@ class CopyLoader(loader.Loadable, loader.FileManagerAware):
             else:
                 self.description = "moving files from: " + self.one_file.dirname
             for f in self.copy_buffer:
-                self.SubLoader = ExternalLoader(0, self.Sudo, shutil_g.move,
-                                                kwargs={'src': f.path,
-                                                        'dst': self.original_path,
-                                                        'overwrite': self.overwrite})
-                for done in self.SubLoader.load_generator:
-                    self.percent = float(done) / size * 100.
+                self.SubLoader = ExternalLoader(0, self.Sudo, _CopyLoader_deferred,
+                                                args=(shutil_g.move,),
+                                                kwargs={'args': (f.path, self.original_path),
+                                                        'kwargs': {'overwrite': self.overwrite}})
+                for n in self.SubLoader.load_generator:
+                    self.percent = n * bar_tick
                     yield
         else:
             if len(self.copy_buffer) == 1:
@@ -172,21 +171,22 @@ class CopyLoader(loader.Loadable, loader.FileManagerAware):
                 self.description = "copying files from: " + self.one_file.dirname
             for f in self.copy_buffer:
                 if os.path.isdir(f.path):
-                    self.SubLoader = ExternalLoader(0, self.Sudo, shutil_g.copytree,
-                                                    kwargs={'src': f.path,
-                                                            'dst': os.path.join(self.original_path, f.basename),
-                                                            'symlinks': True,
-                                                            'overwrite': self.overwrite})
-                    for done in self.SubLoader.load_generator:
-                        self.percent = float(done) / size * 100.
+                    self.SubLoader = ExternalLoader(0, self.Sudo, _CopyLoader_deferred,
+                                                    args=(shutil_g.copytree,),
+                                                    kwargs={'args': (f.path, os.path.join(self.original_path, f.basename)),
+                                                            'kwargs': {'symlinks': True,
+                                                                       'overwrite': self.overwrite}})
+                    for n in self.SubLoader.load_generator:
+                        self.percent = n * bar_tick
                         yield
                 else:
-                    self.SubLoader = ExternalLoader(0, self.Sudo, shutil_g.copy2,
-                                                    (f.path, self.original_path),
-                                                    {'symlinks': True,
-                                                     'overwrite': self.overwrite})
-                    for done in self.SubLoader.load_generator:
-                        self.percent = float(done) / size * 100.
+                    self.SubLoader = ExternalLoader(0, self.Sudo, _CopyLoader_deferred,
+                                                    args=(shutil_g.copy2,),
+                                                    kwargs={'args': (f.path, self.original_path),
+                                                            'kwargs': {'symlinks': True,
+                                                                       'overwrite': self.overwrite}})
+                    for n in self.SubLoader.load_generator:
+                        self.percent = n * bar_tick
                         yield
         cwd = self.fm.get_directory(self.original_path)
         cwd.load_content()
@@ -207,23 +207,46 @@ class CopyLoader(loader.Loadable, loader.FileManagerAware):
             self.SubLoader.destroy()
 
 
-def _CopyLoader_calculate_size(copy_buffer):
+def _CopyLoader_calculate_size(paths):
     import os
     join = os.path.join
 
-    def getSize(f):
-        return os.stat(f).st_size
+    def getSize(path):
+        return os.stat(path).st_size
 
     size = 0
-    for f in copy_buffer:
-        if os.path.isdir(f.path):
-            for base, ds, fs in os.walk(f.path):
+    for path in paths:
+        if os.path.isdir(path):
+            for base, ds, fs in os.walk(path):
                 for f in fs:
                     size += getSize(join(base, f))
         else:
-            size += getSize(f.path)
+            size += getSize(path)
 
     return size
+
+
+def deferred_count(gen, interval=0.033):
+    prev = time.time()
+    last = None
+    i = None
+    for i, x in enumerate(gen):
+        now = time.time()
+        if (now - prev) < interval:
+            continue
+        prev = now
+
+        yield i
+        last = i
+
+    if i != last:
+        yield i
+
+def _CopyLoader_deferred(f, args=None, kwargs=None):
+    for n in deferred_count(f(*([] if args is None else args),
+                              **({} if kwargs is None else kwargs))):
+        yield n
+
 
 
 class paste(Command):
