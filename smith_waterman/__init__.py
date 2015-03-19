@@ -7,18 +7,7 @@ import sys
 import os
 import re
 
-
-# load swalign
-path = os.path.abspath(os.path.dirname(__file__))
-add = path not in sys.path
-
-if add:
-    sys.path.append(path)
-
-import swalign as sw
-
-if add:
-    sys.path.pop()
+from . import swalign as sw
 
 
 class SmithWaterman(object):
