@@ -15,9 +15,6 @@ python does not support non-blocking file ops. So ranger might stop reacting to 
 
 ## How to ?
 
-- Get slightly modified version of ranger from https://github.com/notEvil/ranger
-
-The modifications are necessary for paste to work. With a little luck those changes will be pulled to original ranger.
 - Include it in your commands.py somehow
 
 see commands.py in the repository's root
@@ -29,3 +26,7 @@ I for instance use `map s<delete> console sudo delete` and `map sp sudo paste`.
 
 - paste is based on ranger's CopyLoader and replicates its functionality. I couldn't find a nice way to prevent this.
 - delete masks os.remove and shutil.rmtree such that they are executed in a sub process whenever they are called. Then ranger's delete function gets executed and finally os.remove and shutil.rmtree are unmasked again.
+
+## Acknowledgments
+
+- Oren Tirosh, monkey patch for pickle, http://code.activestate.com/recipes/572213-pickle-the-interactive-interpreter-state/
