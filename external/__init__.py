@@ -144,7 +144,7 @@ class CopyLoader(loader.Loadable, loader.FileManagerAware):
         # TODO: Don't calculate size when renaming (needs detection)
         bytes_per_tick = shutil_g.BLOCK_SIZE
         self.SubLoader = ExternalLoader(0, self.Sudo, _CopyLoader_calculate_size,
-                                        args=([f.path for f in self.copy_buffer],))
+                                        args=([f.path for f in self.copy_buffer], bytes_per_tick))
         for size in self.SubLoader.load_generator:
             yield
         if size == 0:
@@ -207,12 +207,16 @@ class CopyLoader(loader.Loadable, loader.FileManagerAware):
             self.SubLoader.destroy()
 
 
-def _CopyLoader_calculate_size(paths):
+def _CopyLoader_calculate_size(paths, bytes_per_tick):
     import os
     join = os.path.join
 
-    def getSize(path):
-        return os.stat(path).st_size
+    def getSize(path, bytes_per_tick=bytes_per_tick):
+        r = os.stat(path).st_size
+        rest = r % bytes_per_tick
+        if rest != 0:
+            r += bytes_per_tick - rest
+        return r
 
     size = 0
     for path in paths:
