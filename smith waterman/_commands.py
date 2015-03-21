@@ -170,7 +170,7 @@ class scout(Command):
             thisdir.request_resort()
             thisdir.sort_if_outdated()
             thisdir.pointer = 0
-            thisdir.pointed_obj = thisdir.files[0]
+            thisdir.pointed_obj = None if len(thisdir.files) == 0 else thisdir.files[0]
         if self._count(move=asyoutype) == 1 and self.AUTO_OPEN in self.flags:
             return True
         return False
