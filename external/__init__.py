@@ -150,6 +150,7 @@ class CopyLoader(loader.Loadable, loader.FileManagerAware):
         if size == 0:
             size = 1
         bar_tick = 100.0 / (float(size) / bytes_per_tick)
+        total = 0
         if self.do_cut:
             self.original_copy_buffer.clear()
             if len(self.copy_buffer) == 1:
@@ -161,9 +162,11 @@ class CopyLoader(loader.Loadable, loader.FileManagerAware):
                                                 args=(shutil_g.move,),
                                                 kwargs={'args': (f.path, self.original_path),
                                                         'kwargs': {'overwrite': self.overwrite}})
+                n = 0
                 for n in self.SubLoader.load_generator:
-                    self.percent = n * bar_tick
+                    self.percent = (total + n) * bar_tick
                     yield
+                total += n
         else:
             if len(self.copy_buffer) == 1:
                 self.description = "copying: " + self.one_file.path
@@ -176,18 +179,22 @@ class CopyLoader(loader.Loadable, loader.FileManagerAware):
                                                     kwargs={'args': (f.path, os.path.join(self.original_path, f.basename)),
                                                             'kwargs': {'symlinks': True,
                                                                        'overwrite': self.overwrite}})
+                    n = 0
                     for n in self.SubLoader.load_generator:
-                        self.percent = n * bar_tick
+                        self.percent = (total + n) * bar_tick
                         yield
+                    total += n
                 else:
                     self.SubLoader = ExternalLoader(0, self.Sudo, _CopyLoader_deferred,
                                                     args=(shutil_g.copy2,),
                                                     kwargs={'args': (f.path, self.original_path),
                                                             'kwargs': {'symlinks': True,
                                                                        'overwrite': self.overwrite}})
+                    n = 0
                     for n in self.SubLoader.load_generator:
-                        self.percent = n * bar_tick
+                        self.percent = (total + n) * bar_tick
                         yield
+                    total += n
         cwd = self.fm.get_directory(self.original_path)
         cwd.load_content()
 
