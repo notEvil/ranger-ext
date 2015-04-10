@@ -6,4 +6,5 @@ import external
 sudo = external.sudo
 paste = external.paste
 delete = external.delete
+rename = external.rename
 

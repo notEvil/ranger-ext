@@ -67,6 +67,10 @@ class _superCommand(Command):
         cmd = self._getSubCommand()
         if cmd is None:
             return None
-        return cmd.tab()
+        r = cmd.tab()
+        if r is None:
+            return r
+        name = type(self).__name__
+        return ('{} {}'.format(name, sub) for sub in r)
 
 

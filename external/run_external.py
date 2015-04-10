@@ -198,7 +198,7 @@ class Interface(object):
             return
         send('unpause\n', self._popen.stdin)
 
-    def stop(self):
+    def quit(self):
         if not self.isAlive():
             return
         send('quit\n', self._popen.stdin)

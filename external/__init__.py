@@ -3,7 +3,6 @@
 from ranger.api.commands import *
 import ranger.config.commands as commands
 
-import ranger.core.shared as shared
 import ranger.core.loader as loader
 
 import run_external
@@ -11,6 +10,7 @@ import time
 
 import os
 import sys
+import shutil
 
 
 def getParentPath():
@@ -36,7 +36,7 @@ def sudo_enabled(f):
         global Sudo
         Sudo = True
         try:
-            r = f(*args, **kwargs)
+            return f(*args, **kwargs)
         finally:
             Sudo = False
     return _f
@@ -322,16 +322,25 @@ class MaskedEnvironment(object):
         for m in self.Masks:
             m.putDown()
 
+def masked(f, items):
+    def _f(*args, **kwargs):
+        with MaskedEnvironment(items):
+            return f(*args, **kwargs)
+    return _f
 
 
-class delete(Command):
+class delete(commands.delete):
     def __init__(self, *args, **kwargs):
-        Command.__init__(self, *args, **kwargs)
+        commands.delete.__init__(self, *args, **kwargs)
 
-        self.SubCommand = commands.delete(*args, **kwargs)
+    _Items = [(os, 'remove'), (shutil, 'rmtree')]
+    execute = masked(commands.delete.execute, _Items)
+    _question_callback = masked(commands.delete._question_callback, _Items)
 
-    def execute(self):
-        import os, shutil
-        with MaskedEnvironment([(os, 'remove'), (shutil, 'rmtree')]):
-            return self.SubCommand.execute()
 
+
+class rename(commands.rename):
+    def __init__(self, *args, **kwargs):
+        commands.rename.__init__(self, *args, **kwargs)
+
+    execute = masked(commands.rename.execute, [(os, 'renames')])

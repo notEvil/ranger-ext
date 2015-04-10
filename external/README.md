@@ -6,6 +6,7 @@ It's a collection of Commands which are based on the sub module run_external. At
 - sudo
 - paste
 - delete
+- rename
 
 run_external facilitates the execution of (almost) arbitrary functions in a sub process. Results as well as stdout/stderr prints and exceptions are transfered to the calling process using flavoured stdout/stderr. If the function returns a generator then the sub process continues generating and transfering items to the calling process. In this case execution may also be paused or terminated. For instance, the process spawned by paste reports the progress every now and then, and pasting may be paused at any moment.
 
