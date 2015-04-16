@@ -344,3 +344,10 @@ class rename(commands.rename):
         commands.rename.__init__(self, *args, **kwargs)
 
     execute = masked(commands.rename.execute, [(os, 'renames')])
+
+
+class mkdir(commands.mkdir):
+    def __init__(self, *args, **kwargs):
+        commands.mkdir.__init__(self, *args, **kwargs)
+
+    execute = masked(commands.mkdir.execute, [(os, 'makedirs')])
