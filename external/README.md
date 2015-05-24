@@ -5,6 +5,7 @@ It's a collection of Commands which are based on the sub module run_external. At
 
 - sudo
 - paste
+- paste_symlink
 - delete
 - rename
 - mkdir
@@ -22,12 +23,12 @@ python does not support non-blocking file ops. So ranger might stop reacting to 
 see commands.py in the repository's root
 - Create keymap in your rc.conf
 
-I for instance use `map s<delete> console sudo delete` and `map sp sudo paste`.
+I for instance use `map s<delete> console sudo delete` and `map spp sudo paste`.
 
 ## Details
 
 - paste is based on ranger's CopyLoader and replicates its functionality. I couldn't find a nice way to prevent this.
-- delete masks os.remove and shutil.rmtree such that they are executed in a sub process whenever they are called. Then ranger's delete function gets executed and finally os.remove and shutil.rmtree are unmasked again.
+- Some Commands mask crucial low-level functions such that they are executed in a subprocess whenever they are called. Then to perform the task they simply execute the corresponding high-level function of ranger. This way almost no implementation detail is replicated. Eventually these functions are unmasked.
 
 ## Acknowledgments
 

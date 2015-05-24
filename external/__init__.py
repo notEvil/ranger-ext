@@ -4,6 +4,7 @@ from ranger.api.commands import *
 import ranger.config.commands as commands
 
 import ranger.core.loader as loader
+import ranger.core.actions as actions
 
 import run_external
 import time
@@ -11,6 +12,7 @@ import time
 import os
 import sys
 import shutil
+import re
 
 
 def getParentPath():
@@ -270,9 +272,14 @@ class paste(Command):
     def execute(self):
         flags, rest = self.parse_flags()
 
+        overwrite = False
+        match = re.search(r'(^|\W)overwrite\s*=\s*(?P<v>False|True)($|\W)', rest)
+        if match is not None:
+            overwrite = match.group('v') == 'True'
+
         global Sudo
         self.fm.loader.add(CopyLoader(
-            self.fm.copy_buffer, do_cut=self.fm.do_cut, overwrite='o' in flags, sudo=Sudo,
+            self.fm.copy_buffer, do_cut=self.fm.do_cut, overwrite=overwrite, sudo=Sudo
         ))
 
 
@@ -351,3 +358,19 @@ class mkdir(commands.mkdir):
         commands.mkdir.__init__(self, *args, **kwargs)
 
     execute = masked(commands.mkdir.execute, [(os, 'makedirs')])
+
+
+class paste_symlink(Command):
+    def __init__(self, *args, **kwargs):
+        Command.__init__(self, *args, **kwargs)
+
+    def execute(self):
+        flags, rest = self.parse_flags()
+
+        relative = False
+        match = re.search(r'(^|\W)relative\s*=\s*(?P<v>False|True)($|\W)', rest)
+        if match is not None:
+            relative = match.group('v') == 'True'
+
+        self.fm.paste_symlink(relative=relative)
+    execute = masked(execute, [(actions, 'symlink'), (actions, 'relative_symlink')])
