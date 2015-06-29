@@ -143,7 +143,7 @@ class scout(Command):
             ignoreCase = self.IGNORE_CASE in self.flags or (self.SMART_CASE in self.flags and self.pattern.islower())
             if ignoreCase:
                 GlobalSmithWaterman.Pattern = self.pattern.lower()
-                GlobalSmithWaterman.TransF = lambda item: item.basename_lower
+                GlobalSmithWaterman.TransF = lambda item: item.basename.lower()
             else:
                 GlobalSmithWaterman.Pattern = self.pattern
                 GlobalSmithWaterman.TransF = lambda item: item.basename
