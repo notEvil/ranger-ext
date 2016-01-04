@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 
-from ranger.api.commands import *
+import ranger.api.commands as commands
+import collections
 
-
-import sys
 import os
 import re
 
@@ -11,8 +10,8 @@ from . import swalign as sw
 
 
 class SmithWaterman(object):
-    def __init__(self, pattern, transF=lambda item: item, match=2, mismatch=-1, gap_penalty=-2, gap_extension_penalty=0):
-        self.Pattern = pattern
+    def __init__(self, patterns, transF=lambda item: item, match=2, mismatch=-1, gap_penalty=-2, gap_extension_penalty=0):
+        self.Patterns = patterns
         self.TransF = transF
 
         scoring = sw.IdentityScoringMatrix(match, mismatch)
@@ -20,16 +19,19 @@ class SmithWaterman(object):
 
     def __call__(self, item):
         item = self.TransF(item)
-        align = self.Sw.align(item, self.Pattern)
-        return align.score + float(align.r_end - align.r_pos) / len(item)
+        r = 0
+        for pattern in self.Patterns:
+            align = self.Sw.align(item, pattern)
+            r += align.score + float(align.r_end - align.r_pos) / len(item)
+        return r
 
 # add to directory sort
 import ranger.container.directory as directory
-GlobalSmithWaterman = SmithWaterman('', transF=lambda item: item.basename)
+GlobalSmithWaterman = SmithWaterman([], transF=lambda item: item.relative_path)
 directory.Directory.sort_dict['smith waterman'] = GlobalSmithWaterman
 
 
-class scout(Command):
+class scout(commands.Command):
     """:scout [-FLAGS] <pattern>
 
     Swiss army knife command for searching, traveling and filtering files.
@@ -74,7 +76,7 @@ class scout(Command):
     OriginalSortSettings = {}
 
     def __init__(self, *args, **kws):
-        Command.__init__(self, *args, **kws)
+        commands.Command.__init__(self, *args, **kws)
         self._regex = None
         self.flags, self.pattern = self.parse_flags()
 
@@ -88,14 +90,14 @@ class scout(Command):
         self.fm.thistab.last_search = regex
         self.fm.set_search_method(order="search")
 
-        if self.MARK in flags or self.UNMARK in flags:
+        if (self.MARK in flags or self.UNMARK in flags) and thisdir.files:
             value = flags.find(self.MARK) > flags.find(self.UNMARK)
             if self.FILTER in flags:
                 for f in thisdir.files:
                     thisdir.mark_item(f, value)
             else:
                 for f in thisdir.files:
-                    if regex.search(f.basename):
+                    if regex.search(f.relative_path):
                         thisdir.mark_item(f, value)
 
         if self.PERM_FILTER in flags:
@@ -122,11 +124,11 @@ class scout(Command):
             self.fm.block_input(0.1)
 
     def cancel(self):
-        if len(self.OriginalSortSettings) != 0:
+        if len(scout.OriginalSortSettings) != 0:
             settings = self.fm.settings
-            for name, value in self.OriginalSortSettings.iteritems():
+            for name, value in scout.OriginalSortSettings.iteritems():
                 setattr(settings, name, value)
-            self.OriginalSortSettings.clear()
+            scout.OriginalSortSettings.clear()
 
         self.fm.thisdir.temporary_filter = None
         self.fm.thisdir.refilter()
@@ -142,11 +144,11 @@ class scout(Command):
         if self.SW_ORDER in self.flags:
             ignoreCase = self.IGNORE_CASE in self.flags or (self.SMART_CASE in self.flags and self.pattern.islower())
             if ignoreCase:
-                GlobalSmithWaterman.Pattern = self.pattern.lower()
-                GlobalSmithWaterman.TransF = lambda item: item.basename.lower()
+                GlobalSmithWaterman.Patterns = self.pattern.lower().split()
+                GlobalSmithWaterman.TransF = lambda item: item.relative_path_lower
             else:
-                GlobalSmithWaterman.Pattern = self.pattern
-                GlobalSmithWaterman.TransF = lambda item: item.basename
+                GlobalSmithWaterman.Patterns = self.pattern.split()
+                GlobalSmithWaterman.TransF = lambda item: item.relative_path
 
             settings = self.fm.settings
             tempSettings = {'sort': 'smith waterman', 'sort_reverse': True, 'sort_case_insensitive': ignoreCase, 'sort_directories_first': False}
@@ -164,7 +166,7 @@ class scout(Command):
             return True
         return False
 
-    def tab(self):
+    def tab(self, tabnum):
         self.execute()
         #self._count(move=True, offset=1)
 
@@ -219,19 +221,19 @@ class scout(Command):
         cwd     = self.fm.thisdir
         pattern = self.pattern
 
-        if not pattern:
+        if not pattern or not cwd.files:
             return 0
         if pattern == '.':
             return 0
         if pattern == '..':
             return 1
 
-        deq = deque(cwd.files)
+        deq = collections.deque(cwd.files)
         deq.rotate(-cwd.pointer - offset)
         i = offset
         regex = self._build_regex()
         for fsobj in deq:
-            if regex.search(fsobj.basename):
+            if regex.search(fsobj.relative_path):
                 count += 1
                 if move and count == 1:
                     cwd.move(to=(cwd.pointer + i) % len(cwd.files))

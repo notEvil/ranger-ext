@@ -1,376 +1,438 @@
-# -*- coding: utf-8 -*-
-
-from ranger.api.commands import *
+import ranger.core.loader as loader
 import ranger.config.commands as commands
 
-import ranger.core.loader as loader
-import ranger.core.actions as actions
-
-import run_external
-import time
+import shared
 
 import os
 import sys
+import subprocess as sub
+import threading
+import rpcss
+
 import shutil
-import re
 
 
-def getParentPath():
-    return os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+class RpcServerManager(object):
+    '''
+    provides a rpc server.
 
-path = getParentPath()
-add = path not in sys.path
-if add:
-    sys.path.append(path)
-import shared
-if add:
-    sys.path.pop()
+    if necessary, spawns a subprocess hosting a rpc client.
+    '''
+    def __init__(self, sudo=False):
+        self.Sudo = sudo
 
+        self.RpcServer = None
+
+    def getRpcServer(self):
+        rpcServer = self.RpcServer
+        if rpcServer is not None:
+            try:
+                rpcServer.pass_() # check if still alive
+                return rpcServer
+            except IOError, e:
+                if getattr(e, 'errno', 0) != 32:
+                    raise
+
+        args = []
+        if self.Sudo:
+            args.append('sudo')
+        path = os.path.join(os.path.dirname(__file__), 'client.py')
+        args.extend([sys.executable, path])
+
+        import __main__
+        import ranger
+        args.extend(['-p', ranger.arg.confdir, '-p', os.path.dirname(__main__.__file__)])
+
+        proc = sub.Popen(args, stdin=sub.PIPE, stdout=sub.PIPE, bufsize=-1)
+        io = rpcss.EncryptedIO(proc.stdout, proc.stdin)
+        self.RpcServer = rpcServer = rpcss.RpcServer(io)
+
+        return rpcServer
+
+    def __del__(self):
+        try: self.RpcServer.stop()
+        except: pass
+
+
+GlobalRpcServerManager = RpcServerManager()
+GlobalSudoRpcServerManager = RpcServerManager(sudo=True)
+
+ActiveRpcServerManager = None
+
+
+def externalCall(f, externalF=None):
+    '''
+    decorator for external function calls.
+
+    if ActiveRpcServerManager is None: calls f directly
+    else: calls externalF (or f if externalF is None) using ActiveRpcServerManager.
+
+    see rpcss.RpcServer.call.
+    '''
+    if externalF is None:
+        externalF = f
+    def g(*args, **kwargs):
+        if ActiveRpcServerManager is None:
+            return f(*args, **kwargs)
+        rpcServer = ActiveRpcServerManager.getRpcServer()
+        return rpcServer.call(externalF, args, kwargs)
+
+    return g
+
+
+def externalIter(f, externalF=None, step=False):
+    '''
+    decorator for external iterator/generator call.
+
+    if ActiveRpcServerManager is None: calls f directly
+    else: calls externalF (or f if externalF is None) using ActiveRpcServerManager.
+
+    see rpcss.RpcServer.call_iter and rpcss.RpcServer.call_step.
+    '''
+    if externalF is None:
+        externalF = f
+    def g(*args, **kwargs):
+        if ActiveRpcServerManager is None:
+            return f(*args, **kwargs)
+        return _externalIter(ActiveRpcServerManager, externalF, args, kwargs, step)
+
+    return g
+
+def _externalIter(rpcServerManager, externalF, args, kwargs, step):
+    '''
+    calls RpcServerManager.getRpcServer on first next().
+    '''
+    rpcServer = rpcServerManager.getRpcServer()
+    if step:
+        x = rpcServer.call_step(externalF, args, kwargs)
+    else:
+        x = rpcServer.call_iter(externalF, args, kwargs)
+
+    for item in x:
+        yield item
+
+
+def externalProgress(f, externalF=None, delay=loader.Loader.seconds_of_work_time):
+    '''
+    decorator for external non-blocking progress iterator/generator call.
+
+    if ActiveRpcServerManager is None: calls f directly
+    else: calls externalF (or f if externalF is None) using ActiveRpcServerManager.
+    '''
+    if externalF is None:
+        externalF = f
+    def g(*args, **kwargs):
+        if ActiveRpcServerManager is None:
+            return f(*args, **kwargs)
+        return _externalProgress(ActiveRpcServerManager, externalF, args, kwargs, delay)
+
+    return g
+
+def _externalProgress(rpcServerManager, externalF, args, kwargs, delay):
+    '''
+    calls RpcServerManager.getRpcServer on first next().
+    '''
+    import time
+
+    rpcServer = rpcServerManager.getRpcServer()
+    x = rpcServer.call_iter(externalF, args, kwargs)
+
+    current = next(x)
+    yield current
+
+    while True:
+        time.sleep(delay)
+
+        n = None
+        while rpcServer.hasInput():
+            try:
+                n = next(x)
+            except StopIteration:
+                if n is not None:
+                    yield n
+                return
+
+        if n is not None:
+            current = n
+
+        yield current
 
 
 Sudo = False
 
-def sudo_enabled(f):
+
+def sudo_(f):
     '''
-    decorator. sets global Sudo to True before execution and back to False afterwards
+    decorator that sets Sudo to True during call.
     '''
-    def _f(*args, **kwargs):
+    def g(*args, **kwargs):
         global Sudo
         Sudo = True
         try:
-            return f(*args, **kwargs)
+            r = f(*args, **kwargs)
         finally:
             Sudo = False
-    return _f
+
+        return r
+
+    return g
 
 
-class sudo(shared._superCommand):
+def global_(f, defaultRpcServerManager=None):
     '''
-    uses sudo_enabled to toggle global Sudo before handling the sub command
+    decorator that sets ActiveRpcServerManager to defaultRpcServerManager or GlobalSudoRpcServerManager.
+    '''
+    def g(*args, **kwargs):
+        global ActiveRpcServerManager
+        t = ActiveRpcServerManager
+        if Sudo:
+            ActiveRpcServerManager = GlobalSudoRpcServerManager
+        else:
+            ActiveRpcServerManager = defaultRpcServerManager
+
+        try:
+            r = f(*args, **kwargs)
+        finally:
+            ActiveRpcServerManager = t
+
+        return r
+    return g
+
+
+class sudo(shared.SuperCommand):
+    '''
+    shared.SuperCommand that sets Sudo to True during quick, tab, execute and cancel.
     '''
     def __init__(self, *args, **kwargs):
-        shared._superCommand.__init__(self, *args, **kwargs)
+        shared.SuperCommand.__init__(self, *args, **kwargs)
 
-    quick = sudo_enabled(shared._superCommand.quick)
-    execute = sudo_enabled(shared._superCommand.execute)
-    cancel = sudo_enabled(shared._superCommand.cancel)
-    tab = sudo_enabled(shared._superCommand.tab)
+    quick = sudo_(shared.SuperCommand.quick)
+    tab = sudo_(shared.SuperCommand.tab)
+    execute = sudo_(shared.SuperCommand.execute)
+    cancel = sudo_(shared.SuperCommand.cancel)
 
 
+_CopyLoader = loader.CopyLoader
 
-class ExternalLoader(loader.Loadable, shared.FileManagerAware):
+class CopyLoader(_CopyLoader):
     '''
-    useful construct that acts like a local Loader but initiates the external
-    execution and handles communication.
+    sets ActiveRpcServerManager to self.RpcServerManager during each next().
     '''
-    progressbar_supported = True
-    def __init__(self, init, sudo, f, args=None, kwargs=None):
-        self.Init = init
-        self.Sudo = sudo
-        self.F = f
-        self.Args = tuple() if args is None else args
-        self.Kwargs = {} if kwargs is None else kwargs
+    def __init__(self, *args, **kwargs):
+        _CopyLoader.__init__(self, *args, **kwargs)
 
-        importPaths = []
-        import __main__
-        importPaths.append( os.path.abspath(os.path.dirname(__main__.__file__)) )
-        importPaths.append( getParentPath() )
-
-        self.Interface = run_external.Interface(sudo=sudo, beforeSudo=self._beforeSudo, importPaths=importPaths)
-        self.External = run_external.runExternal(self.Interface, self.F, self.Args, self.Kwargs)
-        next(self.External)
-
-        loader.Loadable.__init__(self, self.generate(), 'Executing {} externally ...'.format(f.__name__))
-
-    def _beforeSudo(self):
-        self.fm.execute_command('sudo echo -n')
+        self.RpcServerManager = RpcServerManager(sudo=Sudo)
+        self.Stopped = False
 
     def generate(self):
-        current = self.Init
-        first = True
-        for n in self.External:
-            if n is None:
-                if first:
-                    time.sleep(0.033)
-                    first = False
-                    continue
-                yield current
-                first = True
-                continue
+        global ActiveRpcServerManager
 
-            self.updateProgress(current)
-            current = n
+        gen = _CopyLoader.generate(self)
+        while True:
+            t = ActiveRpcServerManager
+            ActiveRpcServerManager = self.RpcServerManager
+
+            try:
+                n = next(gen)
+            except StopIteration:
+                break
+            except Exception:
+                self._stopRpcClient()
+                raise
+            finally:
+                ActiveRpcServerManager = t
+
             yield n
-            first = True
 
-    def updateProgress(self, current):
-        pass
+        self._stopRpcClient()
 
-    def pause(self):
-        loader.Loadable.pause(self)
-        self.Interface.pause()
-
-    def unpause(self):
-        loader.Loadable.unpause(self)
-        self.Interface.unpause()
-
-    def destroy(self):
-        loader.Loadable.destroy(self)
-        self.Interface.quit()
-
-
-class CopyLoader(loader.Loadable, loader.FileManagerAware):
-    '''
-    very similar to ranger's own CopyLoader. Difference: FS ops are executed
-    externally using ExternalLoader
-    '''
-    progressbar_supported = True
-    def __init__(self, copy_buffer, do_cut=False, overwrite=False, sudo=False):
-        self.copy_buffer = tuple(copy_buffer)
-        self.do_cut = do_cut
-        self.original_copy_buffer = copy_buffer
-        self.original_path = self.fm.thistab.path
-        self.overwrite = overwrite
-        self.percent = 0
-        if self.copy_buffer:
-            self.one_file = self.copy_buffer[0]
-        loader.Loadable.__init__(self, self.generate(), 'Calculating size...')
-
-        self.Sudo = sudo
-        self.SubLoader = None
-
-    def generate(self):
-        from ranger.ext import shutil_generatorized as shutil_g
-        if not self.copy_buffer:
-            return
-        # TODO: Don't calculate size when renaming (needs detection)
-        bytes_per_tick = shutil_g.BLOCK_SIZE
-        self.SubLoader = ExternalLoader(0, self.Sudo, _CopyLoader_calculate_size,
-                                        args=([f.path for f in self.copy_buffer], bytes_per_tick))
-        for size in self.SubLoader.load_generator:
-            yield
-        if size == 0:
-            size = 1
-        bar_tick = 100.0 / (float(size) / bytes_per_tick)
-        total = 0
-        if self.do_cut:
-            self.original_copy_buffer.clear()
-            if len(self.copy_buffer) == 1:
-                self.description = "moving: " + self.one_file.path
-            else:
-                self.description = "moving files from: " + self.one_file.dirname
-            for f in self.copy_buffer:
-                self.SubLoader = ExternalLoader(0, self.Sudo, _CopyLoader_deferred,
-                                                args=(shutil_g.move,),
-                                                kwargs={'args': (f.path, self.original_path),
-                                                        'kwargs': {'overwrite': self.overwrite}})
-                n = 0
-                for n in self.SubLoader.load_generator:
-                    self.percent = (total + n) * bar_tick
-                    yield
-                total += n
-        else:
-            if len(self.copy_buffer) == 1:
-                self.description = "copying: " + self.one_file.path
-            else:
-                self.description = "copying files from: " + self.one_file.dirname
-            for f in self.copy_buffer:
-                if os.path.isdir(f.path):
-                    self.SubLoader = ExternalLoader(0, self.Sudo, _CopyLoader_deferred,
-                                                    args=(shutil_g.copytree,),
-                                                    kwargs={'args': (f.path, os.path.join(self.original_path, f.basename)),
-                                                            'kwargs': {'symlinks': True,
-                                                                       'overwrite': self.overwrite}})
-                    n = 0
-                    for n in self.SubLoader.load_generator:
-                        self.percent = (total + n) * bar_tick
-                        yield
-                    total += n
-                else:
-                    self.SubLoader = ExternalLoader(0, self.Sudo, _CopyLoader_deferred,
-                                                    args=(shutil_g.copy2,),
-                                                    kwargs={'args': (f.path, self.original_path),
-                                                            'kwargs': {'symlinks': True,
-                                                                       'overwrite': self.overwrite}})
-                    n = 0
-                    for n in self.SubLoader.load_generator:
-                        self.percent = (total + n) * bar_tick
-                        yield
-                    total += n
-        cwd = self.fm.get_directory(self.original_path)
-        cwd.load_content()
+    def _stopRpcClient(self):
+        rpcServer = self.RpcServerManager.getRpcServer()
+        rpcServer.stop()
+        self.Stopped = True
 
     def pause(self):
-        loader.Loadable.pause(self)
-        if self.SubLoader is not None:
-            self.SubLoader.pause()
+        if not self.Stopped:
+            rpcServer = self.RpcServerManager.getRpcServer()
+            rpcServer.setPause(True)
+
+        return _CopyLoader.pause(self)
 
     def unpause(self):
-        loader.Loadable.unpause(self)
-        if self.SubLoader is not None:
-            self.SubLoader.unpause()
+        if not self.Stopped:
+            rpcServer = self.RpcServerManager.getRpcServer()
+            rpcServer.setPause(False)
+
+        return _CopyLoader.unpause(self)
 
     def destroy(self):
-        loader.Loadable.destroy(self)
-        if self.SubLoader is not None:
-            self.SubLoader.destroy()
+        if not self.Stopped:
+            self._stopRpcClient()
+
+        return _CopyLoader.destroy(self)
 
 
-def _CopyLoader_calculate_size(paths, bytes_per_tick):
-    import os
-    join = os.path.join
+class Counter(threading.Thread):
+    '''
+    threaded counter.
+    '''
 
-    def getSize(path, bytes_per_tick=bytes_per_tick):
-        r = os.stat(path).st_size
-        rest = r % bytes_per_tick
-        if rest != 0:
-            r += bytes_per_tick - rest
-        return r
+    Time = None
 
-    size = 0
-    for path in paths:
-        if os.path.isdir(path):
-            for base, ds, fs in os.walk(path):
-                for f in fs:
-                    size += getSize(join(base, f))
-        else:
-            size += getSize(path)
+    def __init__(self, interval=1, autostart=True):
+        threading.Thread.__init__(self)
 
-    return size
+        self.Interval = interval
+        self.Autostart = autostart
+
+        self.Count = 0
+        self.Stop = False
+
+        if Counter.Time is None:
+            import time
+            Counter.Time = time
+
+        self.daemon = True
+
+        if autostart:
+            self.start()
+
+    def run(self):
+        while not self.Stop:
+            Counter.Time.sleep(self.Interval)
+            self.Count += 1
 
 
-def deferred_count(gen, interval=0.033):
-    prev = time.time()
+def deferred(x, interval=0.33):
+    '''
+    yields items of x only once in a while.
+
+    uses Counter.
+    '''
+    counter = Counter(interval=interval)
+    prev = counter.Count
     last = None
-    i = None
-    for i, x in enumerate(gen):
-        now = time.time()
-        if (now - prev) < interval:
-            continue
-        prev = now
 
-        yield i
-        last = i
+    try:
+        for xx in x:
+            if counter.Count == prev:
+                continue
+            prev = counter.Count
 
-    if i != last:
-        yield i
+            yield xx
+            last = xx
 
-def _CopyLoader_deferred(f, args=None, kwargs=None):
-    for n in deferred_count(f(*([] if args is None else args),
-                              **({} if kwargs is None else kwargs))):
-        yield n
+        if xx is not last:
+            yield xx
+
+    finally:
+        counter.Stop = True
 
 
+def deferredf(module, name, fname):
+    def g(*args, **kwargs):
+        import importlib
+        m = importlib.import_module(module)
+        f = getattr(m, name)
+        return deferred(f(*args, **kwargs))
+    g.__module__ = __name__
+    g.__name__ = fname
+    return g
 
-class paste(Command):
-    '''
-    Interface to CopyLoader
-    '''
-    def __init__(self, *args, **kwargs):
-        Command.__init__(self, *args, **kwargs)
-
-    def execute(self):
-        flags, rest = self.parse_flags()
-
-        overwrite = False
-        match = re.search(r'(^|\W)overwrite\s*=\s*(?P<v>False|True)($|\W)', rest)
-        if match is not None:
-            overwrite = match.group('v') == 'True'
-
-        global Sudo
-        self.fm.loader.add(CopyLoader(
-            self.fm.copy_buffer, do_cut=self.fm.do_cut, overwrite=overwrite, sudo=Sudo
-        ))
+_shutil_gen_move = deferredf('ranger.ext.shutil_generatorized', 'move', '_shutil_gen_move')
+_shutil_gen_copytree = deferredf('ranger.ext.shutil_generatorized', 'copytree', '_shutil_gen_copytree')
+_shutil_gen_copy2 = deferredf('ranger.ext.shutil_generatorized', 'copy2', '_shutil_gen_copy2')
 
 
+Backups = {} # module: name: f
 
-class Mask(object):
-    '''
-    construct to enable external execution of other module's functions
-    '''
-    def __init__(self, module, name):
-        self.Module = module
-        self.Name = name
+def enableExternalCopy():
+    import ranger.ext.shutil_generatorized as shutil_gen
+    import ranger.core.actions as actions
 
-        self.F = getattr(module, name)
+    m = Backups.setdefault('shutil_gen', {})
 
-    def putOn(self):
-        setattr(self.Module, self.Name, self)
+    m.setdefault('move', shutil_gen.move)
+    shutil_gen.move = externalProgress(shutil_gen.move, _shutil_gen_move)
 
-    def putDown(self):
-        setattr(self.Module, self.Name, self.F)
+    m.setdefault('copytree', shutil_gen.copytree)
+    shutil_gen.copytree = externalProgress(shutil_gen.copytree, _shutil_gen_copytree)
 
-    def __call__(self, *args, **kwargs):
-        self.putDown()
+    m.setdefault('copy2', shutil_gen.copy2)
+    shutil_gen.copy2 = externalProgress(shutil_gen.copy2, _shutil_gen_copy2)
 
-        global Sudo
-        loader = ExternalLoader(None, Sudo, self.F, args, kwargs)
-        for r in loader.load_generator:
-            pass
+    Backups.setdefault('loader', {}).setdefault('CopyLoader', loader.CopyLoader)
+    loader.CopyLoader = CopyLoader
 
-        self.putOn()
-        return r
+    Backups.setdefault('actions', {}).setdefault('CopyLoader', actions.CopyLoader)
+    actions.CopyLoader = CopyLoader
 
+def disableExternalCopy():
+    import ranger.ext.shutil_generatorized as shutil_gen
+    import ranger.core.actions as actions
 
-class MaskedEnvironment(object):
-    '''
-    convenience environment for multiple masks
-    '''
-    def __init__(self, items):
-        self.Items = items
-        self._Masks = None
-
-    def __enter__(self):
-        self.Masks = [Mask(module, name) for module, name in self.Items]
-        for m in self.Masks:
-            m.putOn()
-
-    def __exit__(self, type, value, traceback):
-        for m in self.Masks:
-            m.putDown()
-
-def masked(f, items):
-    def _f(*args, **kwargs):
-        with MaskedEnvironment(items):
-            return f(*args, **kwargs)
-    return _f
+    m = Backups['shutil_gen']
+    shutil_gen.move = m.pop('move')
+    shutil_gen.copytree = m.pop('copytree')
+    shutil_gen.copy2 = m.pop('copy2')
+    loader.CopyLoader = Backups['loader'].pop('CopyLoader')
+    actions.CopyLoader = Backups['actions'].pop('CopyLoader')
 
 
 class delete(commands.delete):
+    '''
+    stores Sudo on execute and sets Sudo during _question_callback.
+    '''
     def __init__(self, *args, **kwargs):
         commands.delete.__init__(self, *args, **kwargs)
 
-    _Items = [(os, 'remove'), (shutil, 'rmtree')]
-    execute = masked(commands.delete.execute, _Items)
-    _question_callback = masked(commands.delete._question_callback, _Items)
+        self.Sudo = None
+
+    def execute(self, *args, **kwargs):
+        self.Sudo = Sudo
+
+        return commands.delete.execute(self, *args, **kwargs)
+
+    def _question_callback(self, *args, **kwargs):
+        global Sudo
+        Sudo = self.Sudo
+
+        try:
+            r = commands.delete._question_callback(self, *args, **kwargs)
+        finally:
+            Sudo = False
+
+        return r
 
 
+def f(module, name, fname):
+    def g(*args, **kwargs):
+        import importlib
+        m = importlib.import_module(module)
+        f = getattr(m, name)
+        return f(*args, **kwargs)
+    g.__module__ = __name__
+    g.__name__ = fname
+    return g
 
-class rename(commands.rename):
-    def __init__(self, *args, **kwargs):
-        commands.rename.__init__(self, *args, **kwargs)
-
-    execute = masked(commands.rename.execute, [(os, 'renames')])
+_shutil_rmtree = f('shutil', 'rmtree', '_shutil_rmtree')
+_os_remove = f('os', 'remove', '_os_remove')
 
 
-class mkdir(commands.mkdir):
-    def __init__(self, *args, **kwargs):
-        commands.mkdir.__init__(self, *args, **kwargs)
+def enableExternalDelete():
+    import shutil
+    import os
 
-    execute = masked(commands.mkdir.execute, [(os, 'makedirs')])
+    Backups.setdefault('shutil', {}).setdefault('rmtree', shutil.rmtree)
+    shutil.rmtree = global_(externalCall(shutil.rmtree, _shutil_rmtree))
 
+    Backups.setdefault('os', {}).setdefault('remove', os.remove)
+    os.remove = global_(externalCall(os.remove, _os_remove))
 
-class paste_symlink(Command):
-    def __init__(self, *args, **kwargs):
-        Command.__init__(self, *args, **kwargs)
+def disableExternalDelete():
+    import shutil
+    import os
 
-    def execute(self):
-        flags, rest = self.parse_flags()
+    shutil.rmtree = Backups['shutil'].pop('rmtree')
+    os.remove = Backups['os'].pop('remove')
 
-        relative = False
-        match = re.search(r'(^|\W)relative\s*=\s*(?P<v>False|True)($|\W)', rest)
-        if match is not None:
-            relative = match.group('v') == 'True'
-
-        self.fm.paste_symlink(relative=relative)
-    execute = masked(execute, [(actions, 'symlink'), (actions, 'relative_symlink')])
