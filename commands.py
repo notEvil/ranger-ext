@@ -4,9 +4,7 @@ scout = sw.scout
 
 import external
 sudo = external.sudo
-paste = external.paste
-paste_symlink = external.paste_symlink
+external.enableExternalCopy()
+external.enableExternalDelete()
 delete = external.delete
-rename = external.rename
-mkdir = external.mkdir
 
