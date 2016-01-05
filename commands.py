@@ -4,7 +4,11 @@ scout = sw.scout
 
 import external
 sudo = external.sudo
-external.enableExternalCopy()
-external.enableExternalDelete()
+external.enableCopy()
+external.enableDelete()
 delete = external.delete
+external.enableMkdir()
+external.enableRename()
+external.enableSymlink()
+external.enableHardlink()
 

@@ -5,8 +5,12 @@ It's a collection of Commands and decorators based on the sub module rpcss.
 At the moment there are:
 
 - sudo
-- paste
+- copy/move
 - delete
+- make directory
+- rename
+- symbolic link
+- hard link
 
 rpcss (RPC secure stream) is a RPC-server-client implementation that uses encrypted binary IO streams for communication.
 It facilitates the execution of (almost) arbitrary functions in a sub process.

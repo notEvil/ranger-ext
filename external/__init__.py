@@ -60,7 +60,7 @@ GlobalSudoRpcServerManager = RpcServerManager(sudo=True)
 ActiveRpcServerManager = None
 
 
-def externalCall(f, externalF=None):
+def call(f, externalF=None):
     '''
     decorator for external function calls.
 
@@ -80,7 +80,7 @@ def externalCall(f, externalF=None):
     return g
 
 
-def externalIter(f, externalF=None, step=False):
+def iter(f, externalF=None, step=False):
     '''
     decorator for external iterator/generator call.
 
@@ -94,11 +94,11 @@ def externalIter(f, externalF=None, step=False):
     def g(*args, **kwargs):
         if ActiveRpcServerManager is None:
             return f(*args, **kwargs)
-        return _externalIter(ActiveRpcServerManager, externalF, args, kwargs, step)
+        return _iter(ActiveRpcServerManager, externalF, args, kwargs, step)
 
     return g
 
-def _externalIter(rpcServerManager, externalF, args, kwargs, step):
+def _iter(rpcServerManager, externalF, args, kwargs, step):
     '''
     calls RpcServerManager.getRpcServer on first next().
     '''
@@ -112,7 +112,7 @@ def _externalIter(rpcServerManager, externalF, args, kwargs, step):
         yield item
 
 
-def externalProgress(f, externalF=None, delay=loader.Loader.seconds_of_work_time):
+def progress(f, externalF=None, delay=loader.Loader.seconds_of_work_time):
     '''
     decorator for external non-blocking progress iterator/generator call.
 
@@ -124,11 +124,11 @@ def externalProgress(f, externalF=None, delay=loader.Loader.seconds_of_work_time
     def g(*args, **kwargs):
         if ActiveRpcServerManager is None:
             return f(*args, **kwargs)
-        return _externalProgress(ActiveRpcServerManager, externalF, args, kwargs, delay)
+        return _progress(ActiveRpcServerManager, externalF, args, kwargs, delay)
 
     return g
 
-def _externalProgress(rpcServerManager, externalF, args, kwargs, delay):
+def _progress(rpcServerManager, externalF, args, kwargs, delay):
     '''
     calls RpcServerManager.getRpcServer on first next().
     '''
@@ -330,6 +330,11 @@ def deferred(x, interval=0.33):
 
 
 def deferredf(module, name, fname):
+    '''
+    workaround.
+
+    pickle doesn't serialize functions which are replaced.
+    '''
     def g(*args, **kwargs):
         import importlib
         m = importlib.import_module(module)
@@ -346,20 +351,31 @@ _shutil_gen_copy2 = deferredf('ranger.ext.shutil_generatorized', 'copy2', '_shut
 
 Backups = {} # module: name: f
 
-def enableExternalCopy():
+def enableCopy():
+    '''
+    replaces
+        ranger.ext.shutil_generatorized
+    .move,
+    .copytree,
+    .copy2,
+        ranger.core.loader
+    .CopyLoader,
+        ranger.core.actions
+    .CopyLoader
+    '''
     import ranger.ext.shutil_generatorized as shutil_gen
     import ranger.core.actions as actions
 
     m = Backups.setdefault('shutil_gen', {})
 
-    m.setdefault('move', shutil_gen.move)
-    shutil_gen.move = externalProgress(shutil_gen.move, _shutil_gen_move)
+    f = m.setdefault('move', shutil_gen.move)
+    shutil_gen.move = progress(f, _shutil_gen_move)
 
-    m.setdefault('copytree', shutil_gen.copytree)
-    shutil_gen.copytree = externalProgress(shutil_gen.copytree, _shutil_gen_copytree)
+    f = m.setdefault('copytree', shutil_gen.copytree)
+    shutil_gen.copytree = progress(f, _shutil_gen_copytree)
 
-    m.setdefault('copy2', shutil_gen.copy2)
-    shutil_gen.copy2 = externalProgress(shutil_gen.copy2, _shutil_gen_copy2)
+    f = m.setdefault('copy2', shutil_gen.copy2)
+    shutil_gen.copy2 = progress(f, _shutil_gen_copy2)
 
     Backups.setdefault('loader', {}).setdefault('CopyLoader', loader.CopyLoader)
     loader.CopyLoader = CopyLoader
@@ -367,7 +383,7 @@ def enableExternalCopy():
     Backups.setdefault('actions', {}).setdefault('CopyLoader', actions.CopyLoader)
     actions.CopyLoader = CopyLoader
 
-def disableExternalCopy():
+def disableCopy():
     import ranger.ext.shutil_generatorized as shutil_gen
     import ranger.core.actions as actions
 
@@ -406,6 +422,11 @@ class delete(commands.delete):
 
 
 def f(module, name, fname):
+    '''
+    workaround.
+
+    pickle doesn't serialize functions which are replaced.
+    '''
     def g(*args, **kwargs):
         import importlib
         m = importlib.import_module(module)
@@ -415,24 +436,144 @@ def f(module, name, fname):
     g.__name__ = fname
     return g
 
-_shutil_rmtree = f('shutil', 'rmtree', '_shutil_rmtree')
+
 _os_remove = f('os', 'remove', '_os_remove')
+_shutil_rmtree = f('shutil', 'rmtree', '_shutil_rmtree')
 
-
-def enableExternalDelete():
-    import shutil
+def enableDelete():
+    '''
+    replaces
+        os
+    .remove,
+        shutil
+    .rmtree
+    '''
     import os
-
-    Backups.setdefault('shutil', {}).setdefault('rmtree', shutil.rmtree)
-    shutil.rmtree = global_(externalCall(shutil.rmtree, _shutil_rmtree))
-
-    Backups.setdefault('os', {}).setdefault('remove', os.remove)
-    os.remove = global_(externalCall(os.remove, _os_remove))
-
-def disableExternalDelete():
     import shutil
-    import os
 
-    shutil.rmtree = Backups['shutil'].pop('rmtree')
+    f = Backups.setdefault('os', {}).setdefault('remove', os.remove)
+    os.remove = global_(call(f, _os_remove))
+
+    f = Backups.setdefault('shutil', {}).setdefault('rmtree', shutil.rmtree)
+    shutil.rmtree = global_(call(f, _shutil_rmtree))
+
+def disableDelete():
+    import os
+    import shutil
+
     os.remove = Backups['os'].pop('remove')
+    shutil.rmtree = Backups['shutil'].pop('rmtree')
+
+
+_os_mkdir = f('os', 'mkdir', '_os_mkdir')
+_os_makedirs = f('os', 'makedirs', '_os_makedirs')
+
+def enableMkdir():
+    '''
+    replaces
+        os
+    .makedirs,
+    .mkdir,
+    '''
+    import os
+    import ranger.config.commands as conf_commands
+
+    f = Backups.setdefault('os', {}).setdefault('mkdir', os.mkdir)
+    os.mkdir = global_(call(f, _os_mkdir))
+
+    f = Backups.setdefault('os', {}).setdefault('makedirs', os.makedirs)
+    os.makedirs = global_(call(f, _os_makedirs))
+
+def disableMkdir():
+    import os
+    import ranger.config.commands as conf_commands
+
+    os.mkdir = Backups['os'].pop('mkdir')
+    os.makedirs = Backups['os'].pop('makedirs')
+
+
+_os_rename = f('os', 'rename', '_os_rename')
+
+def enableRename():
+    '''
+    replaces
+        os
+    .rename
+
+    ranger does not use os.renames.
+    '''
+    import os
+
+    f = Backups.setdefault('os', {}).setdefault('rename', os.rename)
+    os.rename = global_(call(f, _os_rename))
+
+def disableRename():
+    import os
+
+    os.rename = Backups['os'].pop('rename')
+
+
+_os_symlink = f('os', 'symlink', '_os_symlink')
+_relative_symlink = f('ranger.ext.relative_symlink', 'symlink', '_relative_symlink')
+_actions_symlink = f('ranger.core.actions', 'symlink', '_actions_symlink')
+
+def enableSymlink():
+    '''
+    replaces
+        os
+    .symlink,
+        ranger.ext.relative_symlink
+    .symlink,
+        ranger.core.actions
+    .symlink
+    '''
+    import os
+    import ranger.ext.relative_symlink as relative_sym
+    import ranger.core.actions as actions
+
+    f = Backups.setdefault('os', {}).setdefault('symlink', os.symlink)
+    os.symlink = global_(call(f, _os_symlink))
+
+    f = Backups.setdefault('relative_sym', {}).setdefault('relative_symlink', relative_sym.symlink)
+    relative_sym.symlink = global_(call(f, _relative_symlink))
+
+    f = Backups.setdefault('actions', {}).setdefault('symlink', actions.symlink)
+    actions.symlink = global_(call(f, _actions_symlink))
+
+def disableSymlink():
+    import os
+    import ranger.ext.relative_symlink as relative_sym
+    import ranger.core.actions as actions
+
+    os.symlink = Backups['os'].pop('symlink')
+    relative_sym.symlink = Backups['relative_sym'].pop('symlink')
+    actions.symlink = Backups['actions'].pop('symlink')
+
+
+_os_link = f('os', 'link', '_os_link')
+_actions_link = f('ranger.core.actions', 'link', '_actions_link')
+
+def enableHardlink():
+    '''
+    replaces
+        os
+    .link,
+        ranger.core.actions
+    .link
+    '''
+    import os
+    import ranger.core.actions as actions
+
+    f = Backups.setdefault('os', {}).setdefault('link', os.link)
+    os.link = global_(call(f, _os_link))
+
+    f = Backups.setdefault('actions', {}).setdefault('link', actions.link)
+    actions.link = global_(call(f, _actions_link))
+
+def disableHardlink():
+    import os
+    import ranger.core.actions as actions
+
+    os.link = Backups['os'].pop('link')
+    actions.link = Backups['actions'].pop('link')
 
