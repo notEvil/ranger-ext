@@ -310,20 +310,21 @@ def deferred(x, interval=0.33):
     uses Counter.
     '''
     counter = Counter(interval=interval)
-    prev = counter.Count
-    last = None
+    count = counter.Count
+    prev = None
 
     try:
-        for xx in x:
-            if counter.Count == prev:
+        n = None
+        for n in x:
+            if counter.Count == count:
                 continue
-            prev = counter.Count
+            count = counter.Count
 
-            yield xx
-            last = xx
+            yield n
+            prev = n
 
-        if xx is not last:
-            yield xx
+        if n is not prev:
+            yield n
 
     finally:
         counter.Stop = True
