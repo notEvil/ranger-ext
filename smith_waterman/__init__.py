@@ -6,7 +6,8 @@ import collections
 import os
 import re
 
-from . import swalign as sw
+# from . import swalign as sw
+from . import ssw
 
 
 class SmithWaterman(object):
@@ -14,15 +15,22 @@ class SmithWaterman(object):
         self.Patterns = patterns
         self.TransF = transF
 
-        scoring = sw.IdentityScoringMatrix(match, mismatch)
-        self.Sw = sw.LocalAlignment(scoring, gap_penalty=gap_penalty, gap_extension_penalty=gap_extension_penalty)
+        # scoring = sw.IdentityScoringMatrix(match, mismatch)
+        # self.Sw = sw.LocalAlignment(scoring, gap_penalty=gap_penalty, gap_extension_penalty=gap_extension_penalty)
+
+        self.Aligner = ssw.TextAligner(match=match, mismatch=-mismatch, gap_open=-gap_penalty, gap_extend=-gap_extension_penalty, charset='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
 
     def __call__(self, item):
         item = self.TransF(item)
+        self.Aligner.set_ref(item)
         r = 0
+
         for pattern in self.Patterns:
-            align = self.Sw.align(item, pattern)
-            r += align.score + float(align.r_end - align.r_pos) / len(item)
+            # align = self.Sw.align(item, pattern)
+            # r += align.score + float(align.r_end - align.r_pos) / len(item)
+
+            align = self.Aligner.align(pattern)
+            r += align.score + float(align.ref_end - align.ref_begin + 1) / len(item)
         return r
 
 # add to directory sort
