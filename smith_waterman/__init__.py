@@ -1,254 +1,191 @@
 # -*- coding: utf-8 -*-
 
 import ranger.api.commands as commands
-import collections
-
-import os
-import re
-
-# from . import swalign as sw
-from . import ssw
 
 
-class SmithWaterman(object):
-    def __init__(self, patterns, transF=lambda item: item, match=2, mismatch=-1, gap_penalty=-2, gap_extension_penalty=0):
-        self.Patterns = patterns
+## import ssw or sw
+try:
+    from . import ssw
+    sw = None
+except ImportError:
+    ssw = None
+    from . import sw
+
+
+class CaseSensitiveStr(str):
+    '''
+    workaround for str.upper behaviour of swalign.
+    '''
+    def __init__(self, x):
+        str.__init__(self, x)
+
+    def upper(self):
+        return self
+
+
+## define sort key
+
+class KeyBase(object):
+    def __init__(self, ref, match, mismatch, gap_open, gap_extend):
+        self.Ref = None
+        self.Match = match
+        self.Mismatch = mismatch
+        self.GapOpen = gap_open
+        self.GapExtend = gap_extend
+
+        self.setRef(ref)
+
+    def setRef(self, x):
+        raise NotImplementedError
+
+    def __call__(self, item):
+        raise NotImplementedError
+
+
+class SswKey(KeyBase):
+    '''
+    uses ssw (Complete-Striped-Smith-Waterman-Library).
+    '''
+    def __init__(self, ref='', match=2, mismatch=-1, gap_open=-2, gap_extend=0):
+        self.Aligner = ssw.TextAligner(match=match, mismatch=-mismatch, gap_open=-gap_open, gap_extend=-gap_extend)
+
+        KeyBase.__init__(self, ref, match, mismatch, gap_open, gap_extend)
+
+    def setRef(self, x):
+        self.Ref = x
+        self.Aligner.set_ref(x)
+
+    def __call__(self, item):
+        r = self.Aligner.align(item)
+        return r.score + float(r.ref_end - r.ref_begin + 1) / len(item)
+
+class SwKey(KeyBase):
+    '''
+    uses sw (swalign).
+    '''
+    def __init__(self, ref='', match=2, mismatch=-1, gap_open=-2, gap_extend=0):
+        scoring = sw.IdentityScoringMatrix(match, mismatch)
+        self.Alignment = sw.LocalAlignment(scoring, gap_penalty=gap_open, gap_extension_penalty=gap_extend)
+
+        KeyBase.__init__(self, ref, match, mismatch, gap_open, gap_extend)
+
+    def setRef(self, x):
+        self.Ref = CaseSensitiveStr(x)
+
+    def __call__(self, item):
+        r = self.Alignment.align(self.Ref, CaseSensitiveStr(item))
+        return r.score + float(r.r_end - r.r_pos) / len(item)
+
+
+class SplitTransformKey(object):
+    '''
+    splits ref and applies transformation to items.
+
+    calls key for every sub ref and returns sum.
+    '''
+    def __init__(self, key, splitBy=None, transF=lambda item: item):
+        self.Key = key
+        self.SplitBy = splitBy
         self.TransF = transF
 
-        # scoring = sw.IdentityScoringMatrix(match, mismatch)
-        # self.Sw = sw.LocalAlignment(scoring, gap_penalty=gap_penalty, gap_extension_penalty=gap_extension_penalty)
+        self._Refs = []
 
-        self.Aligner = ssw.TextAligner(match=match, mismatch=-mismatch, gap_open=-gap_penalty, gap_extend=-gap_extension_penalty, charset='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
+    def setRef(self, x):
+        self._Refs = x.split(self.SplitBy)
 
     def __call__(self, item):
         item = self.TransF(item)
-        self.Aligner.set_ref(item)
         r = 0
 
-        for pattern in self.Patterns:
-            # align = self.Sw.align(item, pattern)
-            # r += align.score + float(align.r_end - align.r_pos) / len(item)
+        for ref in self._Refs:
+            self.Key.setRef(ref)
+            r += self.Key(item)
 
-            align = self.Aligner.align(pattern)
-            r += align.score + float(align.ref_end - align.ref_begin + 1) / len(item)
         return r
+
+
+if ssw is not None:
+    key = SswKey()
+else:
+    key = SwKey()
+
+GlobalSwKey = SplitTransformKey(key, None, lambda item: item.relative_path)
 
 # add to directory sort
 import ranger.container.directory as directory
-GlobalSmithWaterman = SmithWaterman([], transF=lambda item: item.relative_path)
-directory.Directory.sort_dict['smith waterman'] = GlobalSmithWaterman
+directory.Directory.sort_dict['smith waterman'] = GlobalSwKey
 
 
-class scout(commands.Command):
-    """:scout [-FLAGS] <pattern>
+class sw_nav(commands.Command):
+    SortSettings = None
 
-    Swiss army knife command for searching, traveling and filtering files.
-    The command takes various flags as arguments which can be used to
-    influence its behaviour:
+    OPEN_ON_ENTER = 'e'
+    IGNORE_CASE   = 'i'
+    KEEP_OPEN     = 'k'
+    SMART_CASE    = 's'
+    OPEN_ON_TAB   = 't'
 
-    -a = automatically open a file on unambiguous match
-    -e = open the selected file when pressing enter
-    -f = filter files that match the current search pattern
-    -g = interpret pattern as a glob pattern
-    -i = ignore the letter case of the files
-    -k = keep the console open when changing a directory with the command
-    -l = letter skipping; e.g. allow "rdme" to match the file "readme"
-    -m = mark the matching files after pressing enter
-    -M = unmark the matching files after pressing enter
-    -p = permanent filter: hide non-matching files after pressing enter
-    -s = smart case; like -i unless pattern contains upper case letters
-    -t = apply filter and search pattern as you type
-    -v = inverts the match
-    -w = compute smith waterman score and force apply ordering (decreasing)
-         force pointer to first (best score) on pattern update
+    def __init__(self, *args, **kwargs):
+        commands.Command.__init__(self, *args, **kwargs)
 
-    Multiple flags can be combined.  For example, ":scout -gpt" would create
-    a :filter-like command using globbing.
-    """
-    AUTO_OPEN       = 'a'
-    OPEN_ON_ENTER   = 'e'
-    FILTER          = 'f'
-    SM_GLOB         = 'g'
-    IGNORE_CASE     = 'i'
-    KEEP_OPEN       = 'k'
-    SM_LETTERSKIP   = 'l'
-    MARK            = 'm'
-    UNMARK          = 'M'
-    PERM_FILTER     = 'p'
-    SM_REGEX        = 'r'
-    SMART_CASE      = 's'
-    AS_YOU_TYPE     = 't'
-    INVERT          = 'v'
-    SW_ORDER        = 'w'
-
-    OriginalSortSettings = {}
-
-    def __init__(self, *args, **kws):
-        commands.Command.__init__(self, *args, **kws)
-        self._regex = None
-        self.flags, self.pattern = self.parse_flags()
-
-    def execute(self):
-        thisdir = self.fm.thisdir
-        flags   = self.flags
-        pattern = self.pattern
-        regex   = self._build_regex()
-        count   = self._count(move=True)
-
-        self.fm.thistab.last_search = regex
-        self.fm.set_search_method(order="search")
-
-        if (self.MARK in flags or self.UNMARK in flags) and thisdir.files:
-            value = flags.find(self.MARK) > flags.find(self.UNMARK)
-            if self.FILTER in flags:
-                for f in thisdir.files:
-                    thisdir.mark_item(f, value)
-            else:
-                for f in thisdir.files:
-                    if regex.search(f.relative_path):
-                        thisdir.mark_item(f, value)
-
-        if self.PERM_FILTER in flags:
-            thisdir.filter = regex if pattern else None
-
-        # clean up:
-        self.cancel()
-
-        if self.OPEN_ON_ENTER in flags or \
-                self.AUTO_OPEN in flags and count == 1:
-            if os.path.exists(pattern):
-                self.fm.cd(pattern)
-            else:
-                self.fm.move(right=1)
-
-        if self.KEEP_OPEN in flags and thisdir != self.fm.thisdir:
-            # reopen the console:
-            if not pattern:
-                self.fm.open_console(self.line)
-            else:
-                self.fm.open_console(self.line[0:-len(pattern)])
-
-        if self.quickly_executed and thisdir != self.fm.thisdir and pattern != "..":
-            self.fm.block_input(0.1)
-
-    def cancel(self):
-        if len(scout.OriginalSortSettings) != 0:
-            settings = self.fm.settings
-            for name, value in scout.OriginalSortSettings.iteritems():
-                setattr(settings, name, value)
-            scout.OriginalSortSettings.clear()
-
-        self.fm.thisdir.temporary_filter = None
-        self.fm.thisdir.refilter()
+        flags, ref = self.parse_flags()
+        self.Flags = flags
+        self.Ref = ref
 
     def quick(self):
-        asyoutype = self.AS_YOU_TYPE in self.flags
-        if self.FILTER in self.flags:
-            self.fm.thisdir.temporary_filter = self._build_regex()
-        if self.PERM_FILTER in self.flags and asyoutype:
-            self.fm.thisdir.filter = self._build_regex()
-        if self.FILTER in self.flags or self.PERM_FILTER in self.flags:
-            self.fm.thisdir.refilter()
-        if self.SW_ORDER in self.flags:
-            ignoreCase = self.IGNORE_CASE in self.flags or (self.SMART_CASE in self.flags and self.pattern.islower())
-            if ignoreCase:
-                GlobalSmithWaterman.Patterns = self.pattern.lower().split()
-                GlobalSmithWaterman.TransF = lambda item: item.relative_path_lower
-            else:
-                GlobalSmithWaterman.Patterns = self.pattern.split()
-                GlobalSmithWaterman.TransF = lambda item: item.relative_path
-
+        if sw_nav.SortSettings is None: # init
             settings = self.fm.settings
-            tempSettings = {'sort': 'smith waterman', 'sort_reverse': True, 'sort_case_insensitive': ignoreCase, 'sort_directories_first': False}
-            if settings.sort != tempSettings['sort']:
-                self.OriginalSortSettings.update({name: getattr(settings, name) for name in tempSettings})
-                for name, value in tempSettings.iteritems():
-                    setattr(settings, name, value)
+            sw_nav.SortSettings = {name: getattr(settings, name) for name in ['sort', 'sort_reverse', 'sort_directories_first']}
 
-            thisdir = self.fm.thisdir
-            thisdir.request_resort()
-            thisdir.sort_if_outdated()
-            thisdir.pointer = 0
-            thisdir.pointed_obj = None if len(thisdir.files) == 0 else thisdir.files[0]
-        if self._count(move=asyoutype) == 1 and self.AUTO_OPEN in self.flags:
-            return True
+            settings.sort = 'smith waterman'
+            settings.sort_reverse = True
+            settings.sort_directories_first = False
+
+        ignoreCase = sw_nav.IGNORE_CASE in self.Flags or (sw_nav.SMART_CASE in self.Flags and self.Ref.islower())
+
+        # modify global key
+        if ignoreCase:
+            GlobalSwKey.setRef(self.Ref.lower())
+            GlobalSwKey.TransF = lambda item: item.relative_path_lower
+        else:
+            GlobalSwKey.setRef(self.Ref)
+            GlobalSwKey.TransF = lambda item: item.relative_path
+
+        # force sort
+        thisdir = self.fm.thisdir
+        thisdir.sort()
+        thisdir.move(to=0)
+
         return False
 
     def tab(self, tabnum):
-        self.execute()
-        #self._count(move=True, offset=1)
+        if sw_nav.OPEN_ON_TAB in self.Flags:
+            self._open()
+            self.cancel()
+            return
 
-    def _build_regex(self):
-        if self._regex is not None:
-            return self._regex
+        self.fm.thisdir.move(down=tabnum)
 
-        frmat   = "%s"
-        flags   = self.flags
-        pattern = self.pattern
+    def execute(self):
+        if sw_nav.OPEN_ON_ENTER in self.Flags:
+            self._open()
+            self.cancel()
 
-        if pattern == ".":
-            return re.compile("")
+    def _open(self):
+        self.fm.move(right=1)
 
-        # Handle carets at start and dollar signs at end separately
-        if pattern.startswith('^'):
-            pattern = pattern[1:]
-            frmat = "^" + frmat
-        if pattern.endswith('$'):
-            pattern = pattern[:-1]
-            frmat += "$"
+        if sw_nav.KEEP_OPEN in self.Flags:
+            if len(self.Ref) == 0:
+                line = self.line
+            else:
+                line = self.line[:-len(self.Ref):]
+            self.fm.open_console(line)
 
-        # Apply one of the search methods
-        if self.SM_REGEX in flags:
-            regex = pattern
-        elif self.SM_GLOB in flags:
-            regex = re.escape(pattern).replace("\\*", ".*").replace("\\?", ".")
-        elif self.SM_LETTERSKIP in flags:
-            regex = ".*".join(re.escape(c) for c in pattern)
-        else:
-            regex = re.escape(pattern)
+    def cancel(self):
+        if sw_nav.SortSettings is not None:
+            settings = self.fm.settings
+            for name, value in sw_nav.SortSettings.iteritems():
+                setattr(settings, name, value)
+            sw_nav.SortSettings = None
 
-        regex = frmat % regex
-
-        # Invert regular expression if necessary
-        if self.INVERT in flags:
-            regex = "^(?:(?!%s).)*$" % regex
-
-        # Compile Regular Expression
-        options = re.LOCALE | re.UNICODE
-        if self.IGNORE_CASE in flags or self.SMART_CASE in flags and \
-                pattern.islower():
-            options |= re.IGNORECASE
-        try:
-            self._regex = re.compile(regex, options)
-        except:
-            self._regex = re.compile("")
-        return self._regex
-
-    def _count(self, move=False, offset=0):
-        count   = 0
-        cwd     = self.fm.thisdir
-        pattern = self.pattern
-
-        if not pattern or not cwd.files:
-            return 0
-        if pattern == '.':
-            return 0
-        if pattern == '..':
-            return 1
-
-        deq = collections.deque(cwd.files)
-        deq.rotate(-cwd.pointer - offset)
-        i = offset
-        regex = self._build_regex()
-        for fsobj in deq:
-            if regex.search(fsobj.relative_path):
-                count += 1
-                if move and count == 1:
-                    cwd.move(to=(cwd.pointer + i) % len(cwd.files))
-                    self.fm.thisfile = cwd.pointed_obj
-            if count > 1:
-                return count
-            i += 1
-
-        return count == 1
 

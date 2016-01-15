@@ -27,18 +27,20 @@ The package multiprocessing offers a lot of functionality to achieve this, howev
 
 ## How to ?
 
-- Include it in your commands.py somehow
+- Add it to your commands.py
 
-see commands.py in the repository's root
+See commands.py in the repository's root.
+
 - Create keymap in your rc.conf
 
-I, for instance, use `map s<delete> console sudo delete` and `map spp sudo paste`.
+I use `map spp sudo paste`, `map s<delete> console sudo delete` and so on.
 
 ## Details
 
 - In general crucial low-level functions are replaced by decorated versions.
 This way this extension does not depend on any implementation detail of ranger.
-- But for one exception: `ranger.core.actions` from imports the `ranger.core.loader.CopyLoader` that is necessarily replaced.
+- But for some exceptions: ranger from imports some low-level functions.
+They are necessarily replaced with decorated versions too.
 - Every CopyLoader (on paste) starts a new sub process.
 Inital cryptographic handshake may lead to a small delay.
 - prints to stdout and stderr are completely dropped on client side.

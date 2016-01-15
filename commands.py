@@ -1,6 +1,6 @@
 
 import smith_waterman as sw
-scout = sw.scout
+sw_nav = sw.sw_nav
 
 import external
 sudo = external.sudo

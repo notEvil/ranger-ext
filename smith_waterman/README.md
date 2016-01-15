@@ -1,35 +1,28 @@
 # Smith-Waterman
 ## What is it ?
 
-It's a modified version of ranger's builtin scout command. The new flag `w` enables a custom sorting method which uses the Smith-Waterman algorithm (slightly modified version of https://github.com/mengyao/Complete-Striped-Smith-Waterman-Library) to determine the degree of concordance between the file/directory names and the user input.
+It's a Command that matches user input against every file/directory name in the current directory.
+Files/directories are then put in order of degree of concordance and the cursor is set to the first, best matching, file/directory.
+Either an optimized version of the Smith-Waterman algorithm written in C is used (https://github.com/mengyao/Complete-Striped-Smith-Waterman-Library) or a pure python implementation (https://github.com/mbreese/swalign).
 
 ## Why ?
 
-The Smith-Waterman algorithm is a great tool for fuzzy string matching. Typos or gaps are nuisances, not show stoppers. This extension is meant to be a navigation device, not a filter or selection tool.
+The Smith-Waterman algorithm is a great tool for fuzzy string matching.
+Typos or gaps are nuisances, not show stoppers.
+This extension is meant to be a navigation device, not a filter or selection tool.
 
 ## How to ?
 
-- Run setup_ssw.sh
+- Run setup_ssw.sh (recommended) and/or setup_sw.sh
 
-this should clone https://github.com/mengyao/Complete-Striped-Smith-Waterman-Library, apply a necessary patch and build the library.
+If these scripts fail at some point, do it manually.
+(the patch is necessary, see for yourself ;)
 
-- Include it in your commands.py somehow
+- Add `smith_waterman.sw_nav` to your commands.py
 
-see commands.py in the repository's root
+See commands.py in the repository's root.
 
 - Create keymap in your rc.conf
 
-I use `map i console scout -eksw`
+I use `map i console sw_nav -ekst%space`.
 
-- Add Complete-Striped-Smith-Waterman-Library/src to the environment variable LD_LIBRARY_PATH before starting ranger.
-
-something like `LD_LIBRARY_PATH=/<path to>/Complete-Striped-Smith-Waterman-Library/src ranger`
-
-## Details
-
-- `<tab>` enters the directory/opens the file which is currently selected instead of moving the selection. This is my personal preference. If you have undeniable arguments I'm certainly open for change.
-- I found no simple way to monkey patch the scout command to incorporate necessary adjustments. Therefore I will keep up with future changes to scout myself.
-
-## Changes
-
-- Previous versions used a slightly modified version of https://github.com/mbreese/swalign.
