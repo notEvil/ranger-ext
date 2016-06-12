@@ -47,17 +47,14 @@ class SswKey(KeyBase):
     uses ssw (Complete-Striped-Smith-Waterman-Library).
     '''
     def __init__(self, ref='', match=2, mismatch=-1, gap_open=-2, gap_extend=0):
-        self.Aligner = ssw.TextAligner(match=match, mismatch=-mismatch, gap_open=-gap_open, gap_extend=-gap_extend)
-
         KeyBase.__init__(self, ref, match, mismatch, gap_open, gap_extend)
 
     def setRef(self, x):
         self.Ref = x
-        self.Aligner.set_ref(x)
 
     def __call__(self, item):
-        r = self.Aligner.align(item)
-        return r.score + float(r.ref_end - r.ref_begin + 1) / len(item)
+        score = ssw.score(self.Ref, item, match=self.Match, mismatch=self.Mismatch, gap_open=self.GapOpen, gap_extend=self.GapExtend)
+        return score + float(score) / (self.Match * len(item) + 1)
 
 class SwKey(KeyBase):
     '''
@@ -74,7 +71,8 @@ class SwKey(KeyBase):
 
     def __call__(self, item):
         r = self.Alignment.align(self.Ref, CaseSensitiveStr(item))
-        return r.score + float(r.r_end - r.r_pos) / len(item)
+        score = r.score
+        return score + float(score) / (self.Match * len(item) + 1)
 
 
 class SplitTransformKey(object):
