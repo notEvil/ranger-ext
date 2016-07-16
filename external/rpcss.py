@@ -496,8 +496,8 @@ class RpcClient(_RpcBase, threading.Thread):
 
         try:
             r = f(*args, **kwargs)
-        except Exception:
-            self._write_exception()
+        except Exception, e:
+            self._write_exception(e)
             return
 
         self._write(r)
@@ -509,8 +509,8 @@ class RpcClient(_RpcBase, threading.Thread):
 
         try:
             r = f(*args, **kwargs)
-        except Exception:
-            self._write_exception()
+        except Exception, e:
+            self._write_exception(e)
             return
 
         while True:
@@ -526,8 +526,8 @@ class RpcClient(_RpcBase, threading.Thread):
                 n = next(r)
             except StopIteration:
                 break
-            except Exception:
-                self._write_exception()
+            except Exception, e:
+                self._write_exception(e)
                 return
 
             self._write(n)
@@ -553,8 +553,8 @@ class RpcClient(_RpcBase, threading.Thread):
 
         try:
             r = f(*args, **kwargs)
-        except Exception:
-            self._write_exception()
+        except Exception, e:
+            self._write_exception(e)
             return
 
         self.StepGen = r
@@ -566,8 +566,8 @@ class RpcClient(_RpcBase, threading.Thread):
             n = next(self.StepGen)
         except StopIteration:
             n = Tend
-        except Exception:
-            self._write_exception()
+        except Exception, e:
+            self._write_exception(e)
             self.StepGen = None
             return
 
@@ -578,10 +578,11 @@ class RpcClient(_RpcBase, threading.Thread):
         self.Stop = True
     _Runs[Tstop] = _run_stop
 
-    def _write_exception(self):
-        import traceback
+    def _write_exception(self, e):
+        import sys
+        e.Exc_info = sys.exc_info()
         self._write(Texception)
-        self._write(Exception(traceback.format_exc()))
+        self._write(e)
 
     def __del__(self):
         if self.isAlive():

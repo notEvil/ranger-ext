@@ -38,5 +38,7 @@ class SuperCommand(commands.Command):
         if r is None:
             return None
         name = type(self).__name__
+        if isinstance(r, str):
+            return '{} {}'.format(name, r)
         return ('{} {}'.format(name, sub) for sub in r)
 
