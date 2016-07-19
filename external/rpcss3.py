@@ -423,29 +423,21 @@ class RpcServer(_RpcBase):
         self._write(Tstop)
 
 
-class RpcClient(_RpcBase, threading.Thread):
-    def __init__(self, io, interval=0.03, timeout=60, autostart=True):
+class RpcClient(_RpcBase):
+    def __init__(self, io, interval=0.33, timeout=60):
         _RpcBase.__init__(self, io)
-        threading.Thread.__init__(self)
 
         self.Interval = interval
         self.Timeout = timeout
-        self.Autostart = autostart
 
         self.Pause = False
         self.Stop = False
-        self.Exception = None
 
         self.StepGen = None
 
-        self.daemon = True
+    _Dos = {}
 
-        if autostart:
-            self.start()
-
-    _Runs = {}
-
-    def run(self):
+    def main(self):
         import time
 
         i = 0
@@ -454,42 +446,34 @@ class RpcClient(_RpcBase, threading.Thread):
                 break
 
             try:
-                t = self._readWithPass(block=False)
+                t = self._readWithPass(block=True, timeout=self.Interval)
             except Queue.Empty:
                 if (self.Timeout / self.Interval) < i and self.StepGen is None:
                     break
 
                 i += 1
-                time.sleep(self.Interval)
                 continue
-            except Exception as e:
-                self.Exception = e
-                raise
 
             i = 0
-            try:
-                RpcClient._Runs[t](self)
-            except Exception as e:
-                self.Exception = e
-                raise
+            RpcClient._Dos[t](self)
 
-    def _run_pass(self):
+    def _do_pass(self):
         pass
-    _Runs[Tpass] = _run_pass
+    _Dos[Tpass] = _do_pass
 
-    def _run_setInterval(self):
+    def _do_setInterval(self):
         self.Interval = self._read()
-    _Runs[Tinterval] = _run_setInterval
+    _Dos[Tinterval] = _do_setInterval
 
-    def _run_setTimeout(self):
+    def _do_setTimeout(self):
         self.Timeout = self._read()
-    _Runs[Ttimeout] = _run_setTimeout
+    _Dos[Ttimeout] = _do_setTimeout
 
-    def _run_setPause(self):
+    def _do_setPause(self):
         self.Pause = self._read()
-    _Runs[Tpause] = _run_setPause
+    _Dos[Tpause] = _do_setPause
 
-    def _run_call(self):
+    def _do_call(self):
         data = self._read()
         f, args, kwargs = data
 
@@ -500,9 +484,9 @@ class RpcClient(_RpcBase, threading.Thread):
             return
 
         self._write(r)
-    _Runs[Tcall] = _run_call
+    _Dos[Tcall] = _do_call
 
-    def _run_call_iter(self):
+    def _do_call_iter(self):
         data = self._read()
         f, args, kwargs = data
 
@@ -519,8 +503,6 @@ class RpcClient(_RpcBase, threading.Thread):
                 return
 
             if self.Pause:
-                import time
-                time.sleep(self.Interval)
                 continue
 
             try:
@@ -534,21 +516,21 @@ class RpcClient(_RpcBase, threading.Thread):
             self._write(n)
 
         self._write(Tend)
-    _Runs[Tcall_iter] = _run_call_iter
+    _Dos[Tcall_iter] = _do_call_iter
 
     def _call_iter_handleInput(self):
         while True:
             try:
-                t = self._read(block=False)
+                t = self._read(block=True, timeout=self.Interval if self.Pause else 0)
             except Queue.Empty:
                 return
 
             if not (t == Tpause or t == Tstop):
                 raise Exception('recieved unexpected token {}'.format(t))
 
-            RpcClient._Runs[t](self)
+            RpcClient._Dos[t](self)
 
-    def _run_call_step(self):
+    def _do_call_step(self):
         data = self._read()
         f, args, kwargs = data
 
@@ -560,9 +542,9 @@ class RpcClient(_RpcBase, threading.Thread):
 
         self.StepGen = r
         self._write(Tnext) # init
-    _Runs[Tcall_step] = _run_call_step
+    _Dos[Tcall_step] = _do_call_step
 
-    def _run_next(self):
+    def _do_next(self):
         try:
             n = next(self.StepGen)
         except StopIteration:
@@ -573,23 +555,17 @@ class RpcClient(_RpcBase, threading.Thread):
             return
 
         self._write(n)
-    _Runs[Tnext] = _run_next
+    _Dos[Tnext] = _do_next
 
-    def _run_stop(self):
+    def _do_stop(self):
         self.Stop = True
-    _Runs[Tstop] = _run_stop
+    _Dos[Tstop] = _do_stop
 
     def _write_exception(self, e):
-        import sys
-        e.Exc_info = sys.exc_info()
+        import traceback
+        e.ExceptionStr = traceback.format_exc()
         self._write(Texception)
         self._write(e)
-
-    def __del__(self):
-        if self.isAlive():
-            self.Stop = True
-            self.join()
-
 
 
 
