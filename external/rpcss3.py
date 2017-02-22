@@ -266,7 +266,7 @@ class _RpcBase(object):
         return _RpcBase.Pickle.loads(r)
 
     def _write(self, x):
-        x = _RpcBase.Pickle.dumps(x, protocol=2)
+        x = _RpcBase.Pickle.dumps(x)
         self.IO.write(x)
 
     def pass_(self):
@@ -447,7 +447,7 @@ class RpcClient(_RpcBase):
 
             try:
                 t = self._readWithPass(block=True, timeout=self.Interval)
-            except Queue.Empty:
+            except queue.Empty:
                 if (self.Timeout / self.Interval) < i and self.StepGen is None:
                     break
 
@@ -522,7 +522,7 @@ class RpcClient(_RpcBase):
         while True:
             try:
                 t = self._read(block=True, timeout=self.Interval if self.Pause else 0)
-            except Queue.Empty:
+            except queue.Empty:
                 return
 
             if not (t == Tpause or t == Tstop):

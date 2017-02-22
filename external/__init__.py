@@ -7,7 +7,7 @@ import os
 import sys
 import subprocess as sub
 import threading
-import rpcss
+from . import rpcss
 
 import shutil
 
@@ -21,6 +21,7 @@ class RpcServerManager(object):
     def __init__(self, sudo=False):
         self.Sudo = sudo
 
+        self._Process = None
         self.RpcServer = None
 
     def getRpcServer(self):
@@ -28,10 +29,11 @@ class RpcServerManager(object):
         if rpcServer is not None:
             try:
                 rpcServer.pass_() # check if still alive
-                return rpcServer
-            except IOError, e:
+            except IOError as e:
                 if getattr(e, 'errno', 0) != 32:
                     raise
+            else:
+                return rpcServer
 
         args = []
         if self.Sudo:
@@ -43,15 +45,25 @@ class RpcServerManager(object):
         import ranger
         args.extend(['-p', ranger.arg.confdir, '-p', os.path.dirname(__main__.__file__)])
 
-        proc = sub.Popen(args, stdin=sub.PIPE, stdout=sub.PIPE, bufsize=-1)
+        self._Process = proc = sub.Popen(args, stdin=sub.PIPE, stdout=sub.PIPE, bufsize=-1)
         io = rpcss.EncryptedIO(proc.stdout, proc.stdin)
         self.RpcServer = rpcServer = rpcss.RpcServer(io)
 
         return rpcServer
 
+    def stop(self):
+        rpcServer = self.RpcServer
+        if rpcServer is None:
+            return
+        self.RpcServer = None
+
+        rpcServer.stop()
+        rpcServer.IO.OutStream.close() # sends eof
+        rpcServer.IO.InStream.close() # usually blocks until process terminates
+        self._Process.wait() # to be save
+
     def __del__(self):
-        try: self.RpcServer.stop()
-        except: pass
+        self.stop()
 
 
 GlobalRpcServerManager = RpcServerManager()
@@ -222,7 +234,6 @@ class CopyLoader(_CopyLoader):
         _CopyLoader.__init__(self, *args, **kwargs)
 
         self.RpcServerManager = RpcServerManager(sudo=Sudo)
-        self.Stopped = False
 
     def generate(self):
         global ActiveRpcServerManager
@@ -237,37 +248,36 @@ class CopyLoader(_CopyLoader):
             except StopIteration:
                 break
             except Exception:
-                self._stopRpcClient()
+                self._stop()
                 raise
             finally:
                 ActiveRpcServerManager = t
 
             yield n
 
-        self._stopRpcClient()
+        self._stop()
 
-    def _stopRpcClient(self):
-        rpcServer = self.RpcServerManager.getRpcServer()
-        rpcServer.stop()
-        self.Stopped = True
+    def _stop(self):
+        self.RpcServerManager.stop()
+        self.RpcServerManager = None
 
     def pause(self):
-        if not self.Stopped:
+        if self.RpcServerManager is not None:
             rpcServer = self.RpcServerManager.getRpcServer()
             rpcServer.setPause(True)
 
         return _CopyLoader.pause(self)
 
     def unpause(self):
-        if not self.Stopped:
+        if self.RpcServerManager is not None:
             rpcServer = self.RpcServerManager.getRpcServer()
             rpcServer.setPause(False)
 
         return _CopyLoader.unpause(self)
 
     def destroy(self):
-        if not self.Stopped:
-            self._stopRpcClient()
+        if self.RpcServerManager is not None:
+            self._stop()
 
         return _CopyLoader.destroy(self)
 
@@ -330,24 +340,17 @@ def deferred(x, interval=0.33):
         counter.Stop = True
 
 
-def deferredf(module, name, fname):
-    '''
-    workaround.
+def _shutil_gen_move(*args, **kwargs):
+    import ranger.ext.shutil_generatorized as m
+    return deferred(m.move(*args, **kwargs))
 
-    pickle doesn't serialize functions which are replaced.
-    '''
-    def g(*args, **kwargs):
-        import importlib
-        m = importlib.import_module(module)
-        f = getattr(m, name)
-        return deferred(f(*args, **kwargs))
-    g.__module__ = __name__
-    g.__name__ = fname
-    return g
+def _shutil_gen_copytree(*args, **kwargs):
+    import ranger.ext.shutil_generatorized as m
+    return deferred(m.copytree(*args, **kwargs))
 
-_shutil_gen_move = deferredf('ranger.ext.shutil_generatorized', 'move', '_shutil_gen_move')
-_shutil_gen_copytree = deferredf('ranger.ext.shutil_generatorized', 'copytree', '_shutil_gen_copytree')
-_shutil_gen_copy2 = deferredf('ranger.ext.shutil_generatorized', 'copy2', '_shutil_gen_copy2')
+def _shutil_gen_copy2(*args, **kwargs):
+    import ranger.ext.shutil_generatorized as m
+    return deferred(m.copy2(*args, **kwargs))
 
 
 Backups = {} # module: name: f
@@ -422,24 +425,14 @@ class delete(commands.delete):
         return r
 
 
-def f(module, name, fname):
-    '''
-    workaround.
+def _os_remove(*args, **kwargs):
+    import os
+    return os.remove(*args, **kwargs)
 
-    pickle doesn't serialize functions which are replaced.
-    '''
-    def g(*args, **kwargs):
-        import importlib
-        m = importlib.import_module(module)
-        f = getattr(m, name)
-        return f(*args, **kwargs)
-    g.__module__ = __name__
-    g.__name__ = fname
-    return g
+def _shutil_rmtree(*args, **kwargs):
+    import shutil
+    return shutil.rmtree(*args, **kwargs)
 
-
-_os_remove = f('os', 'remove', '_os_remove')
-_shutil_rmtree = f('shutil', 'rmtree', '_shutil_rmtree')
 
 def enableDelete():
     '''
@@ -466,8 +459,14 @@ def disableDelete():
     shutil.rmtree = Backups['shutil'].pop('rmtree')
 
 
-_os_mkdir = f('os', 'mkdir', '_os_mkdir')
-_os_makedirs = f('os', 'makedirs', '_os_makedirs')
+def _os_mkdir(*args, **kwargs):
+    import os
+    return os.mkdir(*args, **kwargs)
+
+def _os_makedirs(*args, **kwargs):
+    import os
+    return os.makedirs(*args, **kwargs)
+
 
 def enableMkdir():
     '''
@@ -493,7 +492,10 @@ def disableMkdir():
     os.makedirs = Backups['os'].pop('makedirs')
 
 
-_os_rename = f('os', 'rename', '_os_rename')
+def _os_rename(*args, **kwargs):
+    import os
+    return os.rename(*args, **kwargs)
+
 
 def enableRename():
     '''
@@ -514,9 +516,17 @@ def disableRename():
     os.rename = Backups['os'].pop('rename')
 
 
-_os_symlink = f('os', 'symlink', '_os_symlink')
-_relative_symlink = f('ranger.ext.relative_symlink', 'symlink', '_relative_symlink')
-_actions_symlink = f('ranger.core.actions', 'symlink', '_actions_symlink')
+def _os_symlink(*args, **kwargs):
+    import os
+    return os.symlink(*args, **kwargs)
+
+def _relative_symlink(*args, **kwargs):
+    import ranger.ext.relative_symlink
+    return ranger.ext.relative_symlink.symlink(*args, **kwargs)
+
+def _actions_symlink(*args, **kwargs):
+    import ranger.core.actions
+    return ranger.core.actions.symlink(*args, **kwargs)
 
 def enableSymlink():
     '''
@@ -551,8 +561,14 @@ def disableSymlink():
     actions.symlink = Backups['actions'].pop('symlink')
 
 
-_os_link = f('os', 'link', '_os_link')
-_actions_link = f('ranger.core.actions', 'link', '_actions_link')
+def _os_link(*args, **kwargs):
+    import os
+    return os.link(*args, **kwargs)
+
+def _actions_link(*args, **kwargs):
+    import ranger.core.actions
+    return ranger.core.actions.link(*args, **kwargs)
+
 
 def enableHardlink():
     '''

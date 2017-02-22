@@ -30,7 +30,7 @@ if __name__ == '__main__':
 
         # start client
         import external.rpcss as rpcss
-        io = rpcss.EncryptedIO(sys.stdin, sys.stdout)
+        io = rpcss.EncryptedIO(sys.stdin.buffer, sys.stdout.buffer)
 
         null = open(os.devnull, 'w')
         sys.stdout = null
@@ -39,8 +39,11 @@ if __name__ == '__main__':
         client = rpcss.RpcClient(io)
         client.main()
 
-    except Exception, e:
+    except Exception as e:
         import traceback
-        with open('client.py.error', 'wb') as f:
+        with open('client.py.error', 'w') as f:
             f.write(traceback.format_exc())
+
+    else:
+        io.InReader.join() # wait for eof
 
