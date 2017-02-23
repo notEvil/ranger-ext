@@ -1,122 +1,80 @@
 # -*- coding: utf-8 -*-
 
 import ranger.api.commands as commands
+from . import parasail
 
 
-## import ssw or sw
-try:
-    from . import ssw
-    sw = None
-except ImportError:
-    ssw = None
-    from . import sw
+class SwSortKey:
+    def __init__(self):
+        self.Alphabet = set()
+        self.MatchScore = 2
+        self.MismatchScore = -1
+        self.GapOpen = 2
+        self.GapExtend = 0
+        self.MatchMatrix = None
 
-
-class CaseSensitiveStr(str):
-    '''
-    workaround for str.upper behaviour of swalign.
-    '''
-    def __init__(self, x):
-        str.__init__(self, x)
-
-    def upper(self):
-        return self
-
-
-## define sort key
-
-class KeyBase(object):
-    def __init__(self, ref, match, mismatch, gap_open, gap_extend):
         self.Ref = None
-        self.Match = match
-        self.Mismatch = mismatch
-        self.GapOpen = gap_open
-        self.GapExtend = gap_extend
 
-        self.setRef(ref)
+    def setRef(self, ref):
+        self.Ref = ref
+        self._addToAlphabet(ref)
 
-    def setRef(self, x):
-        raise NotImplementedError
+    def __call__(self, s):
+        self._addToAlphabet(s)
+        r = parasail.sw_striped_16(s, self.Ref, self.GapOpen, self.GapExtend, self.MatchMatrix)
+        return r.score
 
-    def __call__(self, item):
-        raise NotImplementedError
+    def _addToAlphabet(self, x):
+        chars = set(x)
+        newChars = chars - self.Alphabet
+        if len(newChars) == 0:
+            return
+
+        self.Alphabet.update(newChars)
+        self.MatchMatrix = parasail.matrix_create(''.join(self.Alphabet), self.MatchScore, self.MismatchScore)
 
 
-class SswKey(KeyBase):
+class SwSplitApplySortKey(SwSortKey):
     '''
-    uses ssw (Complete-Striped-Smith-Waterman-Library).
+    - splits ref by splitBy
+    - applies applyF to sort item
+    - matches new sort item to all parts of ref
+    - returns sum of scores
     '''
-    def __init__(self, ref='', match=2, mismatch=-1, gap_open=-2, gap_extend=0):
-        KeyBase.__init__(self, ref, match, mismatch, gap_open, gap_extend)
+    def __init__(self, splitBy=None, applyF=lambda item: item):
+        super().__init__()
 
-    def setRef(self, x):
-        self.Ref = x
-
-    def __call__(self, item):
-        score = ssw.score(self.Ref, item, match=self.Match, mismatch=self.Mismatch, gap_open=self.GapOpen, gap_extend=self.GapExtend)
-        return score + float(score) / (self.Match * len(item) + 1)
-
-class SwKey(KeyBase):
-    '''
-    uses sw (swalign).
-    '''
-    def __init__(self, ref='', match=2, mismatch=-1, gap_open=-2, gap_extend=0):
-        scoring = sw.IdentityScoringMatrix(match, mismatch)
-        self.Alignment = sw.LocalAlignment(scoring, gap_penalty=gap_open, gap_extension_penalty=gap_extend)
-
-        KeyBase.__init__(self, ref, match, mismatch, gap_open, gap_extend)
-
-    def setRef(self, x):
-        self.Ref = CaseSensitiveStr(x)
-
-    def __call__(self, item):
-        r = self.Alignment.align(self.Ref, CaseSensitiveStr(item))
-        score = r.score
-        return score + float(score) / (self.Match * len(item) + 1)
-
-
-class SplitTransformKey(object):
-    '''
-    splits ref and applies transformation to items.
-
-    calls key for every sub ref and returns sum.
-    '''
-    def __init__(self, key, splitBy=None, transF=lambda item: item):
-        self.Key = key
         self.SplitBy = splitBy
-        self.TransF = transF
+        self.ApplyF = applyF
 
-        self._Refs = []
+        self._Refs = None
 
-    def setRef(self, x):
-        self._Refs = x.split(self.SplitBy)
+    def setRef(self, ref):
+        self.Ref = ref
+        self._Refs = refs = ref.split(self.SplitBy)
+        for ref in refs:
+            self._addToAlphabet(ref)
 
-    def __call__(self, item):
-        item = self.TransF(item)
+    def __call__(self, x):
+        refBak = self.Ref
+
+        x = self.ApplyF(x)
         r = 0
 
-        for ref in self._Refs:
-            self.Key.setRef(ref)
-            r += self.Key(item)
+        try:
+            for ref in self._Refs:
+                self.Ref = ref
+                r += super().__call__(x)
+        finally:
+            self.Ref = refBak
 
         return r
 
 
-if ssw is not None:
-    key = SswKey()
-else:
-    key = SwKey()
-
-GlobalSwKey = SplitTransformKey(key, None, lambda item: item.relative_path)
-
-# add to directory sort
-import ranger.container.directory as directory
-directory.Directory.sort_dict['smith waterman'] = GlobalSwKey
+sortKey = SwSplitApplySortKey()
 
 
 class sw_nav(commands.Command):
-    SortSettings = None
-
     OPEN_ON_ENTER = 'e'
     IGNORE_CASE   = 'i'
     KEEP_OPEN     = 'k'
@@ -124,66 +82,60 @@ class sw_nav(commands.Command):
     OPEN_ON_TAB   = 't'
 
     def __init__(self, *args, **kwargs):
-        commands.Command.__init__(self, *args, **kwargs)
+        super().__init__(*args, **kwargs)
 
-        flags, ref = self.parse_flags()
-        self.Flags = flags
-        self.Ref = ref
+        self.Flags, self.Ref = self.parse_flags()
 
     def quick(self):
-        if sw_nav.SortSettings is None: # init
-            settings = self.fm.settings
-            sw_nav.SortSettings = {name: getattr(settings, name) for name in ['sort', 'sort_reverse', 'sort_directories_first']}
-
-            settings.sort = 'smith waterman'
-            settings.sort_reverse = True
-            settings.sort_directories_first = False
-
         ignoreCase = sw_nav.IGNORE_CASE in self.Flags or (sw_nav.SMART_CASE in self.Flags and self.Ref.islower())
 
         # modify global key
         if ignoreCase:
-            GlobalSwKey.setRef(self.Ref.lower())
-            GlobalSwKey.TransF = lambda item: item.relative_path_lower
+            sortKey.setRef(self.Ref.lower())
+            sortKey.ApplyF = lambda item: item.relative_path_lower
         else:
-            GlobalSwKey.setRef(self.Ref)
-            GlobalSwKey.TransF = lambda item: item.relative_path
+            sortKey.setRef(self.Ref)
+            sortKey.ApplyF = lambda item: item.relative_path
 
         # force sort
         thisdir = self.fm.thisdir
-        thisdir.sort()
+        thisdir.files_all.sort(key=sortKey, reverse=True)
+        thisdir.refilter()
         thisdir.move(to=0)
 
         return False
 
     def tab(self, tabnum):
         if sw_nav.OPEN_ON_TAB in self.Flags:
+            self._finish()
             self._open()
-            self.cancel()
             return
 
         self.fm.thisdir.move(down=tabnum)
 
     def execute(self):
-        if sw_nav.OPEN_ON_ENTER in self.Flags:
-            self._open()
-            self.cancel()
+        if sw_nav.OPEN_ON_ENTER not in self.Flags:
+            return
+
+        self._finish()
+        self._open()
 
     def _open(self):
         self.fm.move(right=1)
 
-        if sw_nav.KEEP_OPEN in self.Flags:
-            if len(self.Ref) == 0:
-                line = self.line
-            else:
-                line = self.line[:-len(self.Ref):]
-            self.fm.open_console(line)
+        if sw_nav.KEEP_OPEN not in self.Flags:
+            return
+
+        if len(self.Ref) == 0:
+            line = self.line
+        else:
+            line = self.line[:-len(self.Ref):]
+        self.fm.open_console(line)
 
     def cancel(self):
-        if sw_nav.SortSettings is not None:
-            settings = self.fm.settings
-            for name, value in sw_nav.SortSettings.iteritems():
-                setattr(settings, name, value)
-            sw_nav.SortSettings = None
+        self._finish()
 
+    def _finish(self):
+        thisdir = self.fm.thisdir
+        thisdir.sort()
 
