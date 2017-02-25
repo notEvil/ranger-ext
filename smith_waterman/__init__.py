@@ -22,7 +22,7 @@ class SwSortKey:
     def __call__(self, s):
         self._addToAlphabet(s)
         r = parasail.sw_striped_16(s, self.Ref, self.GapOpen, self.GapExtend, self.MatchMatrix)
-        return r.score
+        return r.score + 1/len(s)
 
     def _addToAlphabet(self, x):
         chars = set(x)
