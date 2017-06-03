@@ -1,9 +1,11 @@
 import ranger.api.commands as commands
 
+
 class SuperCommand(commands.Command):
     '''
     base class for commands which modify some sub command
     '''
+
     def __init__(self, *args, **kwargs):
         commands.Command.__init__(self, *args, **kwargs)
 
@@ -11,10 +13,9 @@ class SuperCommand(commands.Command):
         line = self.parse_flags()[1]
         if len(line) == 0:
             return None
-        try:
-            cmd = self.fm.commands.get_command(line.split()[0])
-        except KeyError:
-            return None
+        cmd = self.fm.commands.get_command(line.split()[0])
+        if cmd is None:
+            return cmd
         return cmd(line)
 
     def _delegate(name):
@@ -41,4 +42,3 @@ class SuperCommand(commands.Command):
         if isinstance(r, str):
             return '{} {}'.format(name, r)
         return ('{} {}'.format(name, sub) for sub in r)
-

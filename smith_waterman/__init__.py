@@ -22,7 +22,7 @@ class SwSortKey:
     def __call__(self, s):
         self._addToAlphabet(s)
         r = parasail.sw_striped_16(s, self.Ref, self.GapOpen, self.GapExtend, self.MatchMatrix)
-        return r.score + 1/len(s)
+        return r.score + 1 / len(s)
 
     def _addToAlphabet(self, x):
         chars = set(x)
@@ -41,6 +41,7 @@ class SwSplitApplySortKey(SwSortKey):
     - matches new sort item to all parts of ref
     - returns sum of scores
     '''
+
     def __init__(self, splitBy=None, applyF=lambda item: item):
         super().__init__()
 
@@ -76,10 +77,10 @@ sortKey = SwSplitApplySortKey()
 
 class sw_nav(commands.Command):
     OPEN_ON_ENTER = 'e'
-    IGNORE_CASE   = 'i'
-    KEEP_OPEN     = 'k'
-    SMART_CASE    = 's'
-    OPEN_ON_TAB   = 't'
+    IGNORE_CASE = 'i'
+    KEEP_OPEN = 'k'
+    SMART_CASE = 's'
+    OPEN_ON_TAB = 't'
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -138,4 +139,3 @@ class sw_nav(commands.Command):
     def _finish(self):
         thisdir = self.fm.thisdir
         thisdir.sort()
-

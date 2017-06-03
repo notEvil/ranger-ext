@@ -1,4 +1,3 @@
-
 if __name__ == '__main__':
     try:
         import os
@@ -27,7 +26,6 @@ if __name__ == '__main__':
 
             i += 1
 
-
         # start client
         import external.rpcss as rpcss
         io = rpcss.EncryptedIO(sys.stdin.buffer, sys.stdout.buffer)
@@ -45,5 +43,4 @@ if __name__ == '__main__':
             f.write(traceback.format_exc())
 
     else:
-        io.InReader.join() # wait for eof
-
+        io.InReader.join()  # wait for eof

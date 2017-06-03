@@ -48,6 +48,7 @@ class Reader(threading.Thread):
 
     readF shall raise EOS.
     '''
+
     def __init__(self, readF, autostart=True):
         threading.Thread.__init__(self)
 
@@ -89,6 +90,7 @@ class IO(object):
 
     uses functions read and write.
     '''
+
     def __init__(self, inStream, outStream):
         self.InStream = inStream
         self.OutStream = outStream
@@ -103,7 +105,8 @@ class IO(object):
         write(x, self.OutStream)
 
 
-AES_MAX_BYTES = 2^20 # 1MB
+AES_MAX_BYTES = 2 ^ 20  # 1MB
+
 
 class EncryptedIO(IO):
     AES = None
@@ -112,6 +115,7 @@ class EncryptedIO(IO):
     '''
     uses RSA (init) and AES (read/write) encryption.
     '''
+
     def __init__(self, inStream, outStream):
         IO.__init__(self, inStream, outStream)
 
@@ -128,8 +132,8 @@ class EncryptedIO(IO):
         self._random = rand.new()
         self._readCipher = None
         self._writeCipher = None
-        self._readByteCount = 2*AES_MAX_BYTES
-        self._writeByteCount = 2*AES_MAX_BYTES
+        self._readByteCount = 2 * AES_MAX_BYTES
+        self._writeByteCount = 2 * AES_MAX_BYTES
         self._nextReadRefresh = 0
         self._nextWriteRefresh = 0
 
@@ -149,7 +153,7 @@ class EncryptedIO(IO):
         plain read.
         only called once.
         '''
-        ## eliminate race condition
+        # eliminate race condition
         while not hasattr(self, 'InReader'):
             pass
         self.InReader.ReadF = self._read_encrypted
@@ -211,6 +215,7 @@ class T(object):
     '''
     tag/token
     '''
+
     def __init__(self, id):
         self.Id = id
 
@@ -225,9 +230,11 @@ class T(object):
     def __repr__(self):
         return 'T({})'.format(repr(self.Id))
 
+
 def isT(x):
-    ## type(x) == T fails due to pickling/unpickling
+    # type(x) == T fails due to pickling/unpickling
     return type(x).__name__ == 'T'
+
 
 Tpass = T('pass')
 Tinterval = T('interval')
@@ -305,7 +312,7 @@ class RpcServer(_RpcBase):
 
     def call(self, f, args=tuple(), kwargs=dict()):
         self._write(Tcall)
-        self._write( (f, args, kwargs) )
+        self._write((f, args, kwargs))
 
         r = self._read()
         if r == Texception:
@@ -321,7 +328,7 @@ class RpcServer(_RpcBase):
         see self.setPause.
         '''
         self._write(Tcall_iter)
-        self._write( (f, args, kwargs) )
+        self._write((f, args, kwargs))
 
         while True:
             n = self._read()
@@ -347,7 +354,7 @@ class RpcServer(_RpcBase):
         remote produces items stepwise on next.
         '''
         self._write(Tcall_step)
-        self._write( (f, args, kwargs) )
+        self._write((f, args, kwargs))
 
         init = self._read()
         if init == Texception:
@@ -438,8 +445,6 @@ class RpcClient(_RpcBase):
     _Dos = {}
 
     def main(self):
-        import time
-
         i = 0
         while True:
             if self.Stop:
@@ -541,7 +546,7 @@ class RpcClient(_RpcBase):
             return
 
         self.StepGen = r
-        self._write(Tnext) # init
+        self._write(Tnext)  # init
     _Dos[Tcall_step] = _do_call_step
 
     def _do_next(self):
@@ -568,12 +573,11 @@ class RpcClient(_RpcBase):
         self._write(e)
 
 
-
 if __name__ == '__main__':
     #import sys
 
     #io = RpcClient(EncryptedIO(sys.stdin, sys.stdout))
-    #io.join()
+    # io.join()
 
     if True:
         import sys
@@ -603,7 +607,6 @@ if __name__ == '__main__':
             print(io.InQueue.get())
 
             exit()
-
 
     if False:
         import sys
@@ -671,5 +674,3 @@ if __name__ == '__main__':
             server.stop()
 
             exit()
-
-

@@ -9,15 +9,14 @@ import subprocess as sub
 import threading
 from . import rpcss
 
-import shutil
 
-
-class RpcServerManager(object):
+class RpcServerManager:
     '''
     provides a rpc server.
 
     if necessary, spawns a subprocess hosting a rpc client.
     '''
+
     def __init__(self, sudo=False):
         self.Sudo = sudo
 
@@ -28,7 +27,7 @@ class RpcServerManager(object):
         rpcServer = self.RpcServer
         if rpcServer is not None:
             try:
-                rpcServer.pass_() # check if still alive
+                rpcServer.pass_()  # check if still alive
             except IOError as e:
                 if getattr(e, 'errno', 0) != 32:
                     raise
@@ -58,9 +57,9 @@ class RpcServerManager(object):
         self.RpcServer = None
 
         rpcServer.stop()
-        rpcServer.IO.OutStream.close() # sends eof
-        rpcServer.IO.InStream.close() # usually blocks until process terminates
-        self._Process.wait() # to be save
+        rpcServer.IO.OutStream.close()  # sends eof
+        rpcServer.IO.InStream.close()  # usually blocks until process terminates
+        self._Process.wait()  # to be save
 
     def __del__(self):
         self.stop()
@@ -83,6 +82,7 @@ def call(f, externalF=None):
     '''
     if externalF is None:
         externalF = f
+
     def g(*args, **kwargs):
         if ActiveRpcServerManager is None:
             return f(*args, **kwargs)
@@ -103,12 +103,14 @@ def iter(f, externalF=None, step=False):
     '''
     if externalF is None:
         externalF = f
+
     def g(*args, **kwargs):
         if ActiveRpcServerManager is None:
             return f(*args, **kwargs)
         return _iter(ActiveRpcServerManager, externalF, args, kwargs, step)
 
     return g
+
 
 def _iter(rpcServerManager, externalF, args, kwargs, step):
     '''
@@ -133,12 +135,14 @@ def progress(f, externalF=None, delay=loader.Loader.seconds_of_work_time):
     '''
     if externalF is None:
         externalF = f
+
     def g(*args, **kwargs):
         if ActiveRpcServerManager is None:
             return f(*args, **kwargs)
         return _progress(ActiveRpcServerManager, externalF, args, kwargs, delay)
 
     return g
+
 
 def _progress(rpcServerManager, externalF, args, kwargs, delay):
     '''
@@ -215,8 +219,9 @@ class sudo(shared.SuperCommand):
     '''
     shared.SuperCommand that sets Sudo to True during quick, tab, execute and cancel.
     '''
+
     def __init__(self, *args, **kwargs):
-        shared.SuperCommand.__init__(self, *args, **kwargs)
+        super().__init__(*args, **kwargs)
 
     quick = sudo_(shared.SuperCommand.quick)
     tab = sudo_(shared.SuperCommand.tab)
@@ -224,62 +229,67 @@ class sudo(shared.SuperCommand):
     cancel = sudo_(shared.SuperCommand.cancel)
 
 
-_CopyLoader = loader.CopyLoader
+def subclassCopyLoader(CopyLoader):
+    class SubCopyLoader(CopyLoader):
+        '''
+        sets ActiveRpcServerManager to self.RpcServerManager during each next().
+        '''
 
-class CopyLoader(_CopyLoader):
-    '''
-    sets ActiveRpcServerManager to self.RpcServerManager during each next().
-    '''
-    def __init__(self, *args, **kwargs):
-        _CopyLoader.__init__(self, *args, **kwargs)
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
 
-        self.RpcServerManager = RpcServerManager(sudo=Sudo)
+            self.RpcServerManager = RpcServerManager(sudo=Sudo)
 
-    def generate(self):
-        global ActiveRpcServerManager
+        def generate(self):
+            global ActiveRpcServerManager
 
-        gen = _CopyLoader.generate(self)
-        while True:
-            t = ActiveRpcServerManager
-            ActiveRpcServerManager = self.RpcServerManager
+            gen = super().generate()
+            while True:
+                t = ActiveRpcServerManager
+                ActiveRpcServerManager = self.RpcServerManager
 
-            try:
-                n = next(gen)
-            except StopIteration:
-                break
-            except Exception:
-                self._stop()
-                raise
-            finally:
-                ActiveRpcServerManager = t
+                try:
+                    n = next(gen)
+                except StopIteration:
+                    break
+                except Exception:
+                    self._stop()
+                    raise
+                finally:
+                    ActiveRpcServerManager = t
 
-            yield n
+                yield n
 
-        self._stop()
-
-    def _stop(self):
-        self.RpcServerManager.stop()
-        self.RpcServerManager = None
-
-    def pause(self):
-        if self.RpcServerManager is not None:
-            rpcServer = self.RpcServerManager.getRpcServer()
-            rpcServer.setPause(True)
-
-        return _CopyLoader.pause(self)
-
-    def unpause(self):
-        if self.RpcServerManager is not None:
-            rpcServer = self.RpcServerManager.getRpcServer()
-            rpcServer.setPause(False)
-
-        return _CopyLoader.unpause(self)
-
-    def destroy(self):
-        if self.RpcServerManager is not None:
             self._stop()
 
-        return _CopyLoader.destroy(self)
+        def _stop(self):
+            self.RpcServerManager.stop()
+            self.RpcServerManager = None
+
+        def pause(self):
+            if self.RpcServerManager is not None:
+                rpcServer = self.RpcServerManager.getRpcServer()
+                rpcServer.setPause(True)
+
+            return super().pause()
+
+        def unpause(self):
+            if self.RpcServerManager is not None:
+                rpcServer = self.RpcServerManager.getRpcServer()
+                rpcServer.setPause(False)
+
+            return super().unpause()
+
+        def destroy(self):
+            if self.RpcServerManager is not None:
+                self._stop()
+
+            return super().destroy()
+
+    return SubCopyLoader
+
+
+CopyLoader = subclassCopyLoader(loader.CopyLoader)
 
 
 class Counter(threading.Thread):
@@ -290,7 +300,7 @@ class Counter(threading.Thread):
     Time = None
 
     def __init__(self, interval=1, autostart=True):
-        threading.Thread.__init__(self)
+        super().__init__()
 
         self.Interval = interval
         self.Autostart = autostart
@@ -344,16 +354,19 @@ def _shutil_gen_move(*args, **kwargs):
     import ranger.ext.shutil_generatorized as m
     return deferred(m.move(*args, **kwargs))
 
+
 def _shutil_gen_copytree(*args, **kwargs):
     import ranger.ext.shutil_generatorized as m
     return deferred(m.copytree(*args, **kwargs))
+
 
 def _shutil_gen_copy2(*args, **kwargs):
     import ranger.ext.shutil_generatorized as m
     return deferred(m.copy2(*args, **kwargs))
 
 
-Backups = {} # module: name: f
+Backups = {}  # module: name: f
+
 
 def enableCopy():
     '''
@@ -387,6 +400,7 @@ def enableCopy():
     Backups.setdefault('actions', {}).setdefault('CopyLoader', actions.CopyLoader)
     actions.CopyLoader = CopyLoader
 
+
 def disableCopy():
     import ranger.ext.shutil_generatorized as shutil_gen
     import ranger.core.actions as actions
@@ -403,22 +417,23 @@ class delete(commands.delete):
     '''
     stores Sudo on execute and sets Sudo during _question_callback.
     '''
+
     def __init__(self, *args, **kwargs):
-        commands.delete.__init__(self, *args, **kwargs)
+        super().__init__(*args, **kwargs)
 
         self.Sudo = None
 
     def execute(self, *args, **kwargs):
         self.Sudo = Sudo
 
-        return commands.delete.execute(self, *args, **kwargs)
+        return super().execute(*args, **kwargs)
 
     def _question_callback(self, *args, **kwargs):
         global Sudo
         Sudo = self.Sudo
 
         try:
-            r = commands.delete._question_callback(self, *args, **kwargs)
+            r = super()._question_callback(*args, **kwargs)
         finally:
             Sudo = False
 
@@ -428,6 +443,7 @@ class delete(commands.delete):
 def _os_remove(*args, **kwargs):
     import os
     return os.remove(*args, **kwargs)
+
 
 def _shutil_rmtree(*args, **kwargs):
     import shutil
@@ -451,6 +467,7 @@ def enableDelete():
     f = Backups.setdefault('shutil', {}).setdefault('rmtree', shutil.rmtree)
     shutil.rmtree = global_(call(f, _shutil_rmtree))
 
+
 def disableDelete():
     import os
     import shutil
@@ -462,6 +479,7 @@ def disableDelete():
 def _os_mkdir(*args, **kwargs):
     import os
     return os.mkdir(*args, **kwargs)
+
 
 def _os_makedirs(*args, **kwargs):
     import os
@@ -476,7 +494,6 @@ def enableMkdir():
     .mkdir,
     '''
     import os
-    import ranger.config.commands as conf_commands
 
     f = Backups.setdefault('os', {}).setdefault('mkdir', os.mkdir)
     os.mkdir = global_(call(f, _os_mkdir))
@@ -484,9 +501,9 @@ def enableMkdir():
     f = Backups.setdefault('os', {}).setdefault('makedirs', os.makedirs)
     os.makedirs = global_(call(f, _os_makedirs))
 
+
 def disableMkdir():
     import os
-    import ranger.config.commands as conf_commands
 
     os.mkdir = Backups['os'].pop('mkdir')
     os.makedirs = Backups['os'].pop('makedirs')
@@ -510,6 +527,7 @@ def enableRename():
     f = Backups.setdefault('os', {}).setdefault('rename', os.rename)
     os.rename = global_(call(f, _os_rename))
 
+
 def disableRename():
     import os
 
@@ -520,13 +538,16 @@ def _os_symlink(*args, **kwargs):
     import os
     return os.symlink(*args, **kwargs)
 
+
 def _relative_symlink(*args, **kwargs):
     import ranger.ext.relative_symlink
     return ranger.ext.relative_symlink.symlink(*args, **kwargs)
 
+
 def _actions_symlink(*args, **kwargs):
     import ranger.core.actions
     return ranger.core.actions.symlink(*args, **kwargs)
+
 
 def enableSymlink():
     '''
@@ -551,6 +572,7 @@ def enableSymlink():
     f = Backups.setdefault('actions', {}).setdefault('symlink', actions.symlink)
     actions.symlink = global_(call(f, _actions_symlink))
 
+
 def disableSymlink():
     import os
     import ranger.ext.relative_symlink as relative_sym
@@ -564,6 +586,7 @@ def disableSymlink():
 def _os_link(*args, **kwargs):
     import os
     return os.link(*args, **kwargs)
+
 
 def _actions_link(*args, **kwargs):
     import ranger.core.actions
@@ -587,10 +610,10 @@ def enableHardlink():
     f = Backups.setdefault('actions', {}).setdefault('link', actions.link)
     actions.link = global_(call(f, _actions_link))
 
+
 def disableHardlink():
     import os
     import ranger.core.actions as actions
 
     os.link = Backups['os'].pop('link')
     actions.link = Backups['actions'].pop('link')
-
