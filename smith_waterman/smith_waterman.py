@@ -1,73 +1,86 @@
 # -*- coding: utf-8 -*-
 
 import ranger.api.commands as commands
-from . import parasail
+import parasail
 
 
 class SwSortKey:
     def __init__(self):
-        self.Alphabet = set()
-        self.MatchScore = 2
-        self.MismatchScore = -1
-        self.GapOpen = 2
-        self.GapExtend = 0
-        self.MatchMatrix = None
+        self._Alphabet = set()
+        self._MatchScore = 2
+        self._MismatchScore = -1
+        self._GapOpenScore = -2
+        self._GapExtendScore = 0
+        self._MatchScoreMatrix = None
 
-        self.Ref = None
+        self._ReferenceString = None
 
-    def setRef(self, ref):
-        self.Ref = ref
-        self._addToAlphabet(ref)
+    def set_reference_string(self, referenceString):
+        self._update_alphabet(referenceString)
+        self._ReferenceString = referenceString
 
-    def __call__(self, s):
-        self._addToAlphabet(s)
-        r = parasail.sw_striped_16(s, self.Ref, self.GapOpen, self.GapExtend, self.MatchMatrix)
-        return r.score + 1 / len(s)
+    def __call__(self, string):
+        self._update_alphabet(string)
 
-    def _addToAlphabet(self, x):
-        chars = set(x)
-        newChars = chars - self.Alphabet
-        if len(newChars) == 0:
+        r = parasail.sw_striped_16(
+            string,
+            self._ReferenceString,
+            -self._GapOpenScore,
+            -self._GapExtendScore,
+            self._MatchScoreMatrix,
+        )
+
+        r = r.score + 1 / len(string)
+        return r
+
+    def _update_alphabet(self, x):
+        originalLength = len(self._Alphabet)
+
+        self._Alphabet.update(x)
+
+        if len(self._Alphabet) == originalLength:
             return
 
-        self.Alphabet.update(newChars)
-        self.MatchMatrix = parasail.matrix_create(''.join(self.Alphabet), self.MatchScore, self.MismatchScore)
+        self._MatchScoreMatrix = parasail.matrix_create(''.join(self._Alphabet), self._MatchScore, self._MismatchScore)
 
 
 class SwSplitApplySortKey(SwSortKey):
-    '''
-    - splits ref by splitBy
-    - applies applyF to sort item
-    - matches new sort item to all parts of ref
-    - returns sum of scores
-    '''
-
     def __init__(self, splitBy=None, applyF=lambda item: item):
+        '''
+        - splits reference string by splitBy
+        - applies applyF to sort key
+        - matches new sort key to all parts of reference string
+        - returns sum of scores
+        '''
         super().__init__()
 
         self.SplitBy = splitBy
         self.ApplyF = applyF
 
-        self._Refs = None
+        self._ReferenceStrings = None
 
-    def setRef(self, ref):
-        self.Ref = ref
-        self._Refs = refs = ref.split(self.SplitBy)
-        for ref in refs:
-            self._addToAlphabet(ref)
+    def set_reference_string(self, referenceString):
+        referenceStrings = referenceString.split(self.SplitBy)
+
+        for refString in referenceStrings:
+            self._update_alphabet(refString)
+
+        self._ReferenceString = referenceString
+        self._ReferenceStrings = referenceStrings
 
     def __call__(self, x):
-        refBak = self.Ref
+        originalReferenceString = self._ReferenceString
 
         x = self.ApplyF(x)
         r = 0
 
         try:
-            for ref in self._Refs:
-                self.Ref = ref
+            for referenceString in self._ReferenceStrings:
+                self._ReferenceString = referenceString
                 r += super().__call__(x)
+
         finally:
-            self.Ref = refBak
+            self._ReferenceString = originalReferenceString
 
         return r
 
@@ -85,21 +98,28 @@ class sw_nav(commands.Command):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        self.Flags, self.Ref = self.parse_flags()
+        self._Flags, self._ReferenceString = self.parse_flags()
 
     def quick(self):
-        ignoreCase = sw_nav.IGNORE_CASE in self.Flags or (sw_nav.SMART_CASE in self.Flags and self.Ref.islower())
+        global sortKey
+
+        ignoreCase = self.IGNORE_CASE in self._Flags or (self.SMART_CASE in self._Flags
+                                                         and self._ReferenceString.islower())
 
         # modify global key
         if ignoreCase:
-            sortKey.setRef(self.Ref.lower())
+            sortKey.set_reference_string(self._ReferenceString.lower())
             sortKey.ApplyF = lambda item: item.relative_path_lower
+
         else:
-            sortKey.setRef(self.Ref)
+            sortKey.set_reference_string(self._ReferenceString)
             sortKey.ApplyF = lambda item: item.relative_path
 
         # force sort
         thisdir = self.fm.thisdir
+        if thisdir.files_all is None:
+            return False
+
         thisdir.files_all.sort(key=sortKey, reverse=True)
         thisdir.refilter()
         thisdir.move(to=0)
@@ -107,7 +127,7 @@ class sw_nav(commands.Command):
         return False
 
     def tab(self, tabnum):
-        if sw_nav.OPEN_ON_TAB in self.Flags:
+        if self.OPEN_ON_TAB in self._Flags:
             self._finish()
             self._open()
             return
@@ -115,7 +135,7 @@ class sw_nav(commands.Command):
         self.fm.thisdir.move(down=tabnum)
 
     def execute(self):
-        if sw_nav.OPEN_ON_ENTER not in self.Flags:
+        if self.OPEN_ON_ENTER not in self._Flags:
             return
 
         self._finish()
@@ -124,13 +144,11 @@ class sw_nav(commands.Command):
     def _open(self):
         self.fm.move(right=1)
 
-        if sw_nav.KEEP_OPEN not in self.Flags:
+        if self.KEEP_OPEN not in self._Flags:
             return
 
-        if len(self.Ref) == 0:
-            line = self.line
-        else:
-            line = self.line[:-len(self.Ref):]
+        line = self.line if len(self._ReferenceString) == 0 else self.line[:-len(self._ReferenceString):]
+
         self.fm.open_console(line)
 
     def cancel(self):

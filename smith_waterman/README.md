@@ -3,7 +3,7 @@
 
 It's a Command that matches user input against every file/directory name in the current directory.
 Files/directories are then put in order of degree of concordance and the cursor is set to the first, best matching, file/directory.
-The striped Smith-Waterman algorithm implemented in parasail (https://github.com/jeffdaily/parasail) and it's python binding parasail-python (https://github.com/jeffdaily/parasail-python) are used.
+It uses the striped Smith-Waterman algorithm implemented in parasail (https://github.com/jeffdaily/parasail) and made available by parasail-python (https://github.com/jeffdaily/parasail-python).
 See references below.
 
 ## Why ?
@@ -14,21 +14,16 @@ This extension is meant to be a navigation device, not a filter or selection too
 
 ## How to ?
 
-- Run setup_parasail.sh
+- Run install.sh and follow the instructions.
 
-If this script fails at some point, do it manually.
+It currently tries to install automake and libtool-bin because `pip3 install --user parasail` fails due to the version of automake that parasail tries to temporarily set up.
 
-- Add `smith_waterman.sw_nav` to your commands.py
+It assumes python 3 and installs python packages with `--user`.
 
-See commands.py in the repository root.
-
-- Create keymap in your rc.conf
-
-I use `map i console sw_nav -ekst%space`.
+I use `map i console sw_nav -ekst%space` as key map in rc.conf.
 
 ## References
 
 Daily, Jeff. (2016). Parasail: SIMD C library for global, semi-global,
 and local pairwise sequence alignments. *BMC Bioinformatics*, 17(1), 1-11.
 doi:10.1186/s12859-016-0930-z
-
